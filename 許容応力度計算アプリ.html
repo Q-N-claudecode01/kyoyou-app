@@ -2,8 +2,13 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>許容応力度設計 計算ツール＆アドバイスチャット</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="許容応力度">
+<meta name="theme-color" content="#1a365d">
+<title>許容応力度設計 計算ツール</title>
 <style>
 :root {
   --navy: #1a365d;
@@ -188,6 +193,22 @@ canvas { border:1px solid var(--gray-200); border-radius:8px; background:var(--w
   .result-value.ok { color:#22543d !important; }
   .result-value.ng { color:#c53030 !important; }
   canvas { max-width:400px; margin:8px auto; display:block; }
+}
+/* スマホ対応 */
+@media (max-width: 768px) {
+  body { font-size:13px; }
+  .header { padding:0 12px; height:48px; flex-wrap:wrap; }
+  .header h1 { font-size:13px; margin-right:8px; }
+  .tab-bar { gap:0; overflow-x:auto; }
+  .tab-btn { padding:8px 12px; font-size:12px; white-space:nowrap; }
+  .sidebar { display:none; }
+  .calc-area { flex-direction:column; }
+  .calc-input { max-width:100%; min-width:0; padding:12px; }
+  .calc-result { border-left:none; border-top:1px solid var(--gray-200); padding:12px; }
+  .dashboard { padding:16px; }
+  .dash-grid { grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px; }
+  input[type=number], input[type=text] { font-size:16px; } /* iOS zoom防止 */
+  table input[type=number] { width:70px !important; font-size:15px; }
 }
 </style>
 </head>
@@ -1208,6 +1229,22 @@ window.addEventListener('DOMContentLoaded', () => {
   // 日付のデフォルト
   const dd = document.getElementById('dash_date');
   if (dd && !dd.value) dd.value = new Date().toISOString().slice(0,10);
+
+  // Service Worker登録 (PWAオフライン対応)
+  if ('serviceWorker' in navigator) {
+    const swCode = `
+const CACHE = 'kyoyou-v1';
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.add('/')));
+  self.skipWaiting();
+});
+self.addEventListener('fetch', e => {
+  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+});
+`;
+    const blob = new Blob([swCode], {type:'application/javascript'});
+    navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
+  }
 });
 </script>
 </body>
