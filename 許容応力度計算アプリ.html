@@ -197,7 +197,9 @@ canvas { border:1px solid var(--gray-200); border-radius:8px; background:var(--w
 /* スマホ対応 */
 @media (max-width: 768px) {
   body { font-size:13px; }
-  .header { padding:0 12px; height:48px; flex-wrap:wrap; }
+  .header { padding:0 12px; height:auto; min-height:48px; flex-direction:column; align-items:flex-start; padding-top:max(env(safe-area-inset-top), 12px); padding-bottom:8px; }
+  .header h1 { margin-bottom:4px; }
+  .tab-bar { width:100%; }
   .header h1 { font-size:13px; margin-right:8px; }
   .tab-bar { gap:0; overflow-x:auto; }
   .tab-btn { padding:8px 12px; font-size:12px; white-space:nowrap; }
