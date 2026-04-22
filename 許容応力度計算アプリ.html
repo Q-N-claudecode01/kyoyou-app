@@ -424,20 +424,25 @@ modules.foundation = {
   buildInputs() {
     const ct = document.querySelector('input[name="chichu_type"]:checked')?.value || 'gaishuu';
     const el = document.getElementById('foundationInputs');
-    // 外周梁デフォルト: F12=170, ハンチ=85(片側)  内部地中梁デフォルト: F12=250, ハンチ=150(片側)
+    // Excel 自重計算 シート準拠
+    // 外周梁 C8: =((F10*F11)+(F12*F13)+(F12*F14/2))/1000000  F10=150,F11=350,F12=170,F13=150,F14=170
+    // 内部地中梁 O7: =((R9*R10)+(R11*R12)+(R11*R13))/1000000  R9=150,R10=0,R11=120,R12=300,R13=120
     const defaults = ct === 'naibu'
-      ? {w:150, f11:350, f12:250, baseW:150, hunch:150}
-      : {w:150, f11:350, f12:170, baseW:150, hunch:85};
+      ? {w:150, f11:0,   f12:120, baseW:300, hunch:120}   // 内部地中梁 (R9〜R13)
+      : {w:150, f11:350, f12:170, baseW:150, hunch:170};  // 外周梁    (F10〜F14)
+    const lbl = ct === 'naibu'
+      ? {p1:'梁幅 R9', p2:'高さ(スラブ上端〜基礎天端) R10', p3:'高さ(スラブ下端〜基礎下端) R11', p4:'基礎下端幅 R12', p5:'ハンチ幅(片側) R13'}
+      : {p1:'梁幅 F10', p2:'高さ(スラブ上端〜基礎天端) F11', p3:'高さ(スラブ下端〜基礎下端) F12', p4:'基礎下端幅 F13', p5:'ハンチ幅(片側) F14'};
     el.innerHTML = `
       <table style="border-collapse:collapse;width:100%;font-size:13px;margin-bottom:8px;">
         <tr><td style="padding:4px 8px;background:#edf2f7;font-weight:600;width:55%;">項　目</td><td style="padding:4px 8px;background:#edf2f7;font-weight:600;">数　値</td><td style="padding:4px 8px;background:#edf2f7;font-weight:600;">単位</td></tr>
-        <tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">梁幅 F10</td><td style="padding:2px 4px;border-bottom:1px solid #e2e8f0;"><input type="number" id="f_w" value="${defaults.w}" onchange="calcFoundation()" style="width:80px;padding:2px 4px;border:1px solid #cbd5e0;border-radius:4px;"></td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">mm</td></tr>
-        <tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">高さ(スラブ上端〜基礎天端) F11</td><td style="padding:2px 4px;border-bottom:1px solid #e2e8f0;"><input type="number" id="f_gl_up" value="${defaults.f11}" onchange="calcFoundation()" style="width:80px;padding:2px 4px;border:1px solid #cbd5e0;border-radius:4px;"></td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">mm</td></tr>
-        <tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">スラブ下端〜基礎下端 F12</td><td style="padding:2px 4px;border-bottom:1px solid #e2e8f0;"><input type="number" id="f_gl_dn" value="${defaults.f12}" onchange="calcFoundation()" style="width:80px;padding:2px 4px;border:1px solid #cbd5e0;border-radius:4px;"></td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">mm</td></tr>
-        <tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">基礎下端幅 F13</td><td style="padding:2px 4px;border-bottom:1px solid #e2e8f0;"><input type="number" id="f_base_w" value="${defaults.baseW}" onchange="calcFoundation()" style="width:80px;padding:2px 4px;border:1px solid #cbd5e0;border-radius:4px;"></td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">mm</td></tr>
-        <tr><td style="padding:4px 8px;">ハンチ幅(片側) F14/2</td><td style="padding:2px 4px;"><input type="number" id="f_hunch" value="${defaults.hunch}" onchange="calcFoundation()" style="width:80px;padding:2px 4px;border:1px solid #cbd5e0;border-radius:4px;"></td><td style="padding:4px 8px;">mm</td></tr>
+        <tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">${lbl.p1}</td><td style="padding:2px 4px;border-bottom:1px solid #e2e8f0;"><input type="number" id="f_w" value="${defaults.w}" onchange="calcFoundation()" style="width:80px;padding:2px 4px;border:1px solid #cbd5e0;border-radius:4px;"></td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">mm</td></tr>
+        <tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">${lbl.p2}</td><td style="padding:2px 4px;border-bottom:1px solid #e2e8f0;"><input type="number" id="f_gl_up" value="${defaults.f11}" onchange="calcFoundation()" style="width:80px;padding:2px 4px;border:1px solid #cbd5e0;border-radius:4px;"></td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">mm</td></tr>
+        <tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">${lbl.p3}</td><td style="padding:2px 4px;border-bottom:1px solid #e2e8f0;"><input type="number" id="f_gl_dn" value="${defaults.f12}" onchange="calcFoundation()" style="width:80px;padding:2px 4px;border:1px solid #cbd5e0;border-radius:4px;"></td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">mm</td></tr>
+        <tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">${lbl.p4}</td><td style="padding:2px 4px;border-bottom:1px solid #e2e8f0;"><input type="number" id="f_base_w" value="${defaults.baseW}" onchange="calcFoundation()" style="width:80px;padding:2px 4px;border:1px solid #cbd5e0;border-radius:4px;"></td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">mm</td></tr>
+        <tr><td style="padding:4px 8px;">${lbl.p5}</td><td style="padding:2px 4px;"><input type="number" id="f_hunch" value="${defaults.hunch}" onchange="calcFoundation()" style="width:80px;padding:2px 4px;border:1px solid #cbd5e0;border-radius:4px;"></td><td style="padding:4px 8px;">mm</td></tr>
       </table>
-      <div class="info-box" style="font-size:11px;">※Excelシート「自重計算」準拠　スラブ自重は別途計算</div>
+      <div class="info-box" style="font-size:11px;">※Excel「自重計算」準拠　外周梁=C8 / 内部地中梁=O7　スラブ自重は別途</div>
     `;
   }
 };
@@ -451,10 +456,14 @@ function calcFoundation() {
     const baseW = N('f_base_w') || w;
     const chichuType = document.querySelector('input[name="chichu_type"]:checked')?.value || 'gaishuu';
     const typeName = chichuType === 'naibu' ? '内部地中梁' : '外周梁';
-    // Excel方式: C8=((F10*F11)+(F12*F13)+(F12*F14/2))/1000000
-    const a1 = w * glUp;           // F10×F11
-    const a2 = glDn * baseW;       // F12×F13
-    const a3 = glDn * hunch;       // F12×(F14/2) ※F14=ハンチ幅total, 片側入力なのでそのまま
+    // Excel 自重計算準拠
+    // 外周梁 C8 : (F10*F11) + (F12*F13) + (F12*F14/2)   片側ハンチ=1三角
+    // 内部地中梁 O7: (R9*R10) + (R11*R12) + (R11*R13)      両側ハンチ=2三角=長方形
+    const a1 = w * glUp;            // F10×F11 / R9×R10
+    const a2 = glDn * baseW;        // F12×F13 / R11×R12
+    const a3 = chichuType === 'naibu'
+      ? glDn * hunch                // R11×R13   (両側=2三角)
+      : glDn * hunch / 2;           // F12×F14/2 (片側=1三角)
     const area = a1 + a2 + a3;
     const areaM2 = area / 1e6;
     const weight = areaM2 * 24;
@@ -465,6 +474,13 @@ function calcFoundation() {
 // 地中梁 自重計算 結果+断面図表示
 function foundChichuResultHTML(typeName, area, areaM2, weight, chichuType, w, glUp, glDn, hunch, baseW, a1, a2, a3) {
   const imgSrc = chichuType === 'naibu' ? CHICHU_IMG_NAIBU : CHICHU_IMG_GAISHUU;
+  const isNaibu = chichuType === 'naibu';
+  const r1Label = isNaibu ? `R9×R10 = ${w}×${glUp}` : `F10×F11 = ${w}×${glUp}`;
+  const r2Label = isNaibu ? `R11×R12 = ${glDn}×${baseW}` : `F12×F13 = ${glDn}×${baseW}`;
+  const r3Label = isNaibu ? `R11×R13 = ${glDn}×${hunch}（両側ハンチ=2三角）` : `F12×F14/2 = ${glDn}×${hunch}/2（片側ハンチ=1三角）`;
+  const formulaText = isNaibu
+    ? 'O7: (R9×R10)+(R11×R12)+(R11×R13)'
+    : 'C8: (F10×F11)+(F12×F13)+(F12×F14/2)';
 
   return `
     <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
@@ -476,6 +492,7 @@ function foundChichuResultHTML(typeName, area, areaM2, weight, chichuType, w, gl
         <div class="result-card">
           <h3>計算過程（Excel「自重計算」準拠）</h3>
           <table style="width:100%;font-size:12px;border-collapse:collapse;">
+            <tr><td style="padding:3px 6px;">適用式</td><td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:11px;">${formulaText}</td></tr>
             <tr><td style="padding:3px 6px;">断面積 A</td><td style="padding:3px 6px;text-align:right;font-weight:600;">${areaM2.toFixed(6)} m²</td></tr>
             <tr><td style="padding:3px 6px;">RC単位体積重量</td><td style="padding:3px 6px;text-align:right;">24 kN/m³</td></tr>
             <tr style="border-top:2px solid #cbd5e0;font-weight:700;"><td style="padding:3px 6px;">A × 24 =</td><td style="padding:3px 6px;text-align:right;">${weight.toFixed(4)} kN/m</td></tr>
@@ -484,9 +501,9 @@ function foundChichuResultHTML(typeName, area, areaM2, weight, chichuType, w, gl
         <div class="result-card">
           <h3>断面内訳</h3>
           <table style="width:100%;font-size:12px;border-collapse:collapse;">
-            <tr><td style="padding:3px 6px;">F10×F11 = ${w}×${glUp}</td><td style="padding:3px 6px;text-align:right;">${a1.toLocaleString()} mm²</td></tr>
-            <tr><td style="padding:3px 6px;">F12×F13 = ${glDn}×${baseW}</td><td style="padding:3px 6px;text-align:right;">${a2.toLocaleString()} mm²</td></tr>
-            <tr><td style="padding:3px 6px;">F12×F14/2 = ${glDn}×${hunch*2}/2</td><td style="padding:3px 6px;text-align:right;">${a3.toLocaleString()} mm²</td></tr>
+            <tr><td style="padding:3px 6px;">${r1Label}</td><td style="padding:3px 6px;text-align:right;">${a1.toLocaleString()} mm²</td></tr>
+            <tr><td style="padding:3px 6px;">${r2Label}</td><td style="padding:3px 6px;text-align:right;">${a2.toLocaleString()} mm²</td></tr>
+            <tr><td style="padding:3px 6px;">${r3Label}</td><td style="padding:3px 6px;text-align:right;">${a3.toLocaleString()} mm²</td></tr>
             <tr style="border-top:2px solid #cbd5e0;font-weight:700;"><td style="padding:3px 6px;">合計 A</td><td style="padding:3px 6px;text-align:right;">${area.toLocaleString()} mm²</td></tr>
           </table>
           <div style="font-size:11px;color:var(--gray-600);margin-top:6px;">※スラブ自重は別途計算</div>
