@@ -146,6 +146,11 @@ canvas { border:1px solid var(--gray-200); border-radius:8px; background:var(--w
 .chat-input-area { padding:16px 20px; background:var(--white); border-top:1px solid var(--gray-200); display:flex; gap:10px; }
 .chat-input-area textarea { flex:1; padding:10px 14px; border:1px solid var(--gray-300); border-radius:8px; font-size:14px; resize:none; height:44px; font-family:inherit; }
 .chat-input-area textarea:focus { outline:none; border-color:var(--orange); }
+/* Back-to-Top button (fixed) */
+.back-to-top { position:fixed; right:18px; bottom:80px; width:48px; height:48px; border-radius:50%; background:var(--navy); color:#fff; border:none; box-shadow:0 4px 12px rgba(0,0,0,.25); font-size:22px; line-height:1; cursor:pointer; z-index:9999; display:none; align-items:center; justify-content:center; padding:0; }
+.back-to-top:hover { background:var(--orange); }
+.back-to-top.show { display:flex; }
+@media(max-width:768px) { .back-to-top { right:14px; bottom:90px; width:44px; height:44px; font-size:20px; } }
 /* Material table */
 .material-table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:12px; }
 .material-table th { background:var(--navy); color:var(--white); padding:6px 8px; text-align:left; font-weight:600; }
@@ -332,7 +337,54 @@ canvas { border:1px solid var(--gray-200); border-radius:8px; background:var(--w
   </div>
 </div>
 
+<!-- Back to top button -->
+<button id="backToTop" class="back-to-top" title="上へ戻る" onclick="scrollToTop()">↑</button>
+
 <script>
+// ============================================================
+// BACK TO TOP
+// ============================================================
+function scrollToTop() {
+  // チャットタブの場合 → チャットメッセージのスクロールをトップへ
+  const chatMsgs = document.getElementById('chatMessages');
+  const chatTab = document.getElementById('tab-chat');
+  if (chatTab && chatTab.classList.contains('active') && chatMsgs) {
+    chatMsgs.scrollTo({top:0, behavior:'smooth'});
+  }
+  // 計算ツールタブの場合 → 結果エリア + ページ全体
+  const resArea = document.getElementById('calc-result-area');
+  if (resArea) resArea.scrollTo?.({top:0, behavior:'smooth'});
+  const calcArea = document.querySelector('.calc-result');
+  if (calcArea) calcArea.scrollTo?.({top:0, behavior:'smooth'});
+  // ページ全体
+  window.scrollTo({top:0, behavior:'smooth'});
+  // body要素も
+  document.body.scrollTop = 0;
+  document.documentElement.scrollTop = 0;
+}
+function updateBackToTopVisibility() {
+  const btn = document.getElementById('backToTop');
+  if (!btn) return;
+  const chatMsgs = document.getElementById('chatMessages');
+  const chatTab = document.getElementById('tab-chat');
+  const calcResult = document.querySelector('.calc-result');
+  let scrolled = (window.scrollY || document.documentElement.scrollTop) > 200;
+  if (chatTab && chatTab.classList.contains('active') && chatMsgs) {
+    scrolled = scrolled || chatMsgs.scrollTop > 200;
+  }
+  if (calcResult) {
+    scrolled = scrolled || calcResult.scrollTop > 200;
+  }
+  btn.classList.toggle('show', scrolled);
+}
+window.addEventListener('scroll', updateBackToTopVisibility, {passive:true});
+document.addEventListener('DOMContentLoaded', () => {
+  const cm = document.getElementById('chatMessages');
+  if (cm) cm.addEventListener('scroll', updateBackToTopVisibility, {passive:true});
+  const cr = document.querySelector('.calc-result');
+  if (cr) cr.addEventListener('scroll', updateBackToTopVisibility, {passive:true});
+});
+
 // ============================================================
 // TAB & MODULE SWITCHING
 // ============================================================
@@ -843,13 +895,48 @@ function handleChatKey(e) {
   }
 }
 
-function addMessage(role, text) {
+function addMessage(role, text, pages) {
   const el = document.getElementById('chatMessages');
   const div = document.createElement('div');
   div.className = 'msg ' + role;
   div.textContent = text;
   el.appendChild(div);
+  // 該当PDFページがあればサムネイル表示
+  if (role === 'assistant' && pages && pages.length > 0) {
+    const pgWrap = document.createElement('div');
+    pgWrap.className = 'msg assistant book-pages-wrap';
+    pgWrap.style.cssText = 'background:transparent;border:none;padding:0;max-width:90%;align-self:flex-start;';
+    pgWrap.innerHTML = `
+      <div style="font-size:11px;color:var(--gray-600);margin-bottom:6px;">📖 書籍「許容応力度設計①(2025)」該当ページ (${pages.length}枚) — タップで拡大</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${pages.map(p => {
+          const fname = 'book_pages/p' + String(p).padStart(3,'0') + '.png';
+          return `<div style="cursor:pointer;border:1px solid var(--gray-300);border-radius:6px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1);" onclick="openBookPage('${fname}', ${p})">
+            <img src="${fname}" alt="P${p}" loading="lazy" style="width:140px;height:auto;display:block;" onerror="this.parentElement.style.display='none';">
+            <div style="font-size:11px;text-align:center;padding:3px 0;background:var(--navy);color:#fff;">P.${p}</div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    el.appendChild(pgWrap);
+  }
   el.scrollTop = el.scrollHeight;
+}
+
+// PDFページを拡大表示するライトボックス
+function openBookPage(src, pageNum) {
+  let lb = document.getElementById('bookLightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'bookLightbox';
+    lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:99999;cursor:zoom-out;padding:20px;';
+    lb.onclick = () => lb.remove();
+    document.body.appendChild(lb);
+  }
+  lb.innerHTML = `
+    <div style="position:relative;max-width:95vw;max-height:95vh;overflow:auto;">
+      <div style="position:absolute;top:8px;right:8px;background:var(--navy);color:#fff;padding:6px 12px;border-radius:4px;font-size:13px;font-weight:600;z-index:1;">P.${pageNum}</div>
+      <img src="${src}" style="max-width:100%;height:auto;display:block;border-radius:4px;background:#fff;">
+    </div>`;
 }
 
 function sendChat() {
@@ -859,33 +946,34 @@ function sendChat() {
   input.value = '';
   addMessage('user', text);
   chatHistory.push({role:'user', content:text});
-  const answer = localQA(text);
-  addMessage('assistant', answer);
-  chatHistory.push({role:'assistant', content:answer});
+  const result = localQA(text);
+  addMessage('assistant', result.answer, result.pages);
+  chatHistory.push({role:'assistant', content:result.answer});
 }
 
 // Local Q&A knowledge base
+// pages: 書籍「木造軸組み工法住宅の許容応力度設計①_2025年版」の該当ページ番号(書籍内ページ)
 const qaDB = [
-  {keywords:['壁量','壁量計算','必要壁量'], answer:'【壁量計算について】\n壁量計算は建築基準法施行令第46条に基づきます。\n\n必要壁量 = 床面積 × 必要壁量係数\n\n必要壁量係数（令46条）:\n・屋根が重い場合: 1階=33cm/㎡、2階=21cm/㎡\n・屋根が軽い場合: 1階=29cm/㎡、2階=15cm/㎡\n\n許容応力度計算ルートでは、四分割法または偏心率の検討が必要です。\n偏心率 ≤ 0.3 を満たすこと。\n\n書籍参照: 第2章 2.3節'},
-  {keywords:['風圧力','風圧','風力','風荷重'], answer:'【風圧力の算定】(令87条、平12建告1454号)\n\nQw = q × Cf × Aw\nq = 0.6 × E × V0²\nE = Er² × Gf\nEr = 1.7(H/ZG)^α\n\n地表面粗度区分:\nI: ZG=250, α=0.10\nII: ZG=350, α=0.15\nIII: ZG=450, α=0.20\nIV: ZG=550, α=0.27\n\n書籍参照: 第2章 2.2.2節 (P.66)'},
-  {keywords:['地震力','地震','層せん断力'], answer:'【地震力の算定】(令88条)\n\nQi = Ci × Wi\nCi = Z × Rt × Ai × Co\n\nCo = 0.2 (標準せん断力係数)\nZ: 地震地域係数 (0.7~1.0)\nRt: 振動特性係数\nAi: 地震層せん断力分布係数\n\n書籍参照: 第2章 2.2.3節'},
-  {keywords:['偏心率','偏心','4分割','四分割'], answer:'【偏心率の検定】\n\n偏心率 Rex = ex / rex\n\n許容応力度計算では偏心率 ≤ 0.3 が必要です。\n\n偏心率が0.3を超える場合は、壁配置の見直しが必要です。\n準耐力壁等を構造計算で耐力壁等を用いている場合は、四分割法および偏心率の計算に含める耐力要素に注意が必要です。\n\n書籍参照: 第2章 2.3.1節 (表2.3.3.1)'},
-  {keywords:['アンカーボルト','アンカー','M12','M16'], answer:'【アンカーボルト配置ルール】\n\n① 耐力壁両端部に配置（引抜力が発生していない場合、省略可）\n② 土台端部、継手部に配置（メス側は配置不可の場合、省略可）\n③ 上記以外の箇所は:\n  ・2階建: 2.7m以内\n  ・3階建: 2.0m以内\n\n【M12とM16の関係】\nM16(HD金物用)を配置した箇所にはM12の追加配置は不要。\n\n力の伝達経路:\nM12: 柱→土台→M12→基礎\nM16: 柱→M16→基礎 (直接基礎へ伝達)\n\n検討後確認→計算書3.1(1)'},
-  {keywords:['柱頭','柱脚','金物','N値'], answer:'【柱頭柱脚接合部】\n\n接合部の選定はN値計算法に基づきます。\n\n柱頭柱脚接合部の短期許容引張耐力(表2.4.4.1):\n・かすがい: 0.7 kN\n・山形プレートVP: 3.81 kN\n・L字金物: 5.36 kN\n・羽子板ボルト: 引き寄せ金物等\n\n【金物メーカー情報】\nカネシン:\n・ミドルコーナー10(10kN)\n・フレックスHD(それ以上)\n\nタナカ:\n・シナーコーナー床枠仕様(10kN)\n・オメガコーナー床枠仕様(15kN)\n\n注意: コーナー金物は直交梁の梁成差があってはならない\n合板タイプ30mmまで対応はあくまでも合板のみ\n\n書籍参照: 第2章 2.4.4節'},
-  {keywords:['水平構面','床構面','屋根構面','火打'], answer:'【水平構面の設計】\n\n水平構面は地震力・風圧力を耐力壁へ伝達する重要な構造要素です。\n\n種類:\n・床水平構面（根太無し工法等）\n・火打水平構面\n・屋根水平構面（垂木、登り梁）\n・勾配屋根水平構面\n\n水平構面を登り梁+24mm合板で取る場合:\n許容せん断耐力÷1.96 = 壁倍率換算\n\n屋根構面10寸超は詳細計算が必要\n\n書籍参照: 第2章 2.4.5-2.4.6節, 第3章 3.2節'},
-  {keywords:['狭小','狭小耐力壁','46条2項'], answer:'【狭小耐力壁（46条2項ルート）】\n\nこのルート適用の場合:\n・土台・柱・横架材はJAS材または集成材である必要あり\n・母屋・垂木については判断が分かれる可能性あり\n（昭和62年建設省告示第1898号の改正：平成28年国土交通省告示第792号参照）\n\n注意点:\n・耐力壁の間隔を455mmとする場合、内側からの施工に支障がなければ問題なし\n・「構造耐力上主要な部分」は長期・短期荷重を負担する部材を指す'},
-  {keywords:['ストラ','ストラデザイン','入力','手順'], answer:'【ストラデザイン入力手順】\n\n① 新規立ち上げ → インポート（MPCAD8物件CSVデータ）→ 保存 → 計算 → 保存\n② 新規立ち上げ → インポート → マスター選択（ビルダー仕様）→ 保存 → 追加インポート①\n③ 梁全選択 → 梁仕口：自動\n④ 部屋編集（1FUB=土間、2F以上UB）\n⑤ 特殊壁入力（袖壁・界壁・小屋裏界壁・バルコニー壁・腰壁・下がり壁）\n\n基礎検討: ※2パターン行う\n・ピンまたは固定 → 4方向\n・自由端 → 2方向（※隅部浮き上がり検討）'},
-  {keywords:['基礎','自重','断面積'], answer:'【基礎梁自重計算】\n\n基礎梁の自重 = 断面積(m²) × RC単位体積重量(24 kN/m³)\n\n基準法規定:\n・布基礎: 根入れGL240mm以上、立上り300mm以上\n・ベタ基礎: 根入れGL120mm以上、立上り300mm以上\n\n主筋かぶり厚: 2-D13, 2-D16\n2段筋の場合は上主筋9mm・下主筋11mm\n\n腹金: 基本D-10は梁成600超えから入れる\n\n計算ツールの「基礎梁自重」モジュールで計算できます。'},
-  {keywords:['材料','基準強度','ヤング','無等級','JAS'], answer:'【材料の基準強度】\n\n木材の基準強度は平12建告1452号に定められています。\n\n主な樹種の基準強度(Fb/Ft/Fc/Fs):\n・すぎ: E=700 kN/cm² (無等級)\n・べいまつ: E=1000 kN/cm² (無等級)\n・べいつが: E=800 kN/cm² (無等級)\n\n無等級材の基準強度は表2.1.1.4を参照。\n\n機械等級区分材は表2.1.1.2, 2.1.1.3を参照。\n\n書籍参照: 第2章 2.1.1節'},
-  {keywords:['接地圧','布基礎','地盤'], answer:'【布基礎接地圧の計算】\n\nσe = W(壁荷重+基礎自重) / (L × B)\n\nW: 壁荷重(N/㎡) × 壁高さ(m) × 壁幅(m) + 基礎自重(N)\nL: 壁幅(m)\nB: 基礎下端幅(m)\n\nσe ≤ 地盤許容応力度 qa であること。\n\n計算ツールの「布基礎接地圧」モジュールで計算できます。'},
-  {keywords:['告示','告示仕様','仕様規定','建告','1460'], answer:'【告示仕様（仕様規定）】\n\n木造住宅の主な告示:\n\n■ 平12建告1460号（柱脚柱頭接合部）\n・N値計算法による金物選定の根拠告示\n・表の「い」〜「ぬ」で接合部仕様を規定\n\n■ 平12建告1458号（耐力壁の仕様）\n・壁倍率の認定基準\n・筋かい・面材耐力壁の仕様を規定\n\n■ 平12建告1452号（木材の基準強度）\n・樹種・等級ごとの基準強度Fb,Ft,Fc,Fs\n\n■ 令3改正告示（令和3年国交省告示）\n・屋根ふき材の緊結方法を強化\n・地表面粗度区分の定義を統一（建築物周辺）\n・瓦屋根: 全数緊結が原則（ガイドライン工法義務化）'},
-  {keywords:['大臣認定','認定','TBFC','性能評価'], answer:'【大臣認定と性能評価】\n\n■ 大臣認定とは\n建築基準法に基づき、国土交通大臣が個別に性能を認定する制度。\n告示仕様に該当しない工法・材料を使用する場合に必要。\n\n■ 主な認定例（木造関係）\n・タルキックII（TBFC-0118）: 屋根水平構面のビス留め工法\n・ネダノン（面材床構面）\n・各メーカーの接合金物認定\n\n■ 認定書の見方\n・認定番号: TBFC-XXXX（床倍率認定）等\n・適用条件（垂木寸法、ピッチ、ビス仕様等）を厳守\n・計算書には認定書の写しを添付\n\n■ 性能評価機関\n・日本住宅・木材技術センター\n・日本建築総合試験所\n・ベターリビング'},
-  {keywords:['タルキック','TK','屋根倍率','ビス留め'], answer:'【タルキックII（TK-II）】\n大臣認定 TBFC-0118 / 屋根水平構面のビス留め工法\n\n■ 仕様と屋根(床)倍率\n仕様1: 垂木45×105, 間隔500以下, ビスP150以下 → 0.9×cosθ\n仕様2: 垂木45×105, 間隔500以下, ビスP100以下 → 1.1×cosθ\n仕様3: 垂木45×105, 間隔340以下, ビスP150以下 → 1.0×cosθ\n仕様4: 垂木45×105, 間隔340以下, ビスP100以下 → 1.3×cosθ\n仕様5: 垂木45×120, 間隔500以下, ビスP150以下 → 1.0×cosθ\n仕様6: 垂木45×120, 間隔500以下, ビスP100以下 → 1.5×cosθ\n\n■ cosθ参考値\n3寸勾配: 0.958 / 5寸勾配: 0.894 / 10寸勾配: 0.707\n\n■ ビス仕様\nTK-II 105: L=105, D1=5.30mm, ねじ径4.20mm\nTK-II 150: L=150, D1=5.55mm, ねじ径4.50mm\n\nリファレンスパネルの「タルキックII」タブに詳細データあり。'},
-  {keywords:['計算方針','ルート','設計方針','設計ルート'], answer:'【許容応力度計算の計算方針】\n\n■ 設計ルート\n・ルート1: 壁量計算(令46条) + 柱頭柱脚(令47条) + N値計算\n・ルート2: 許容応力度計算 + 層間変形角1/120以下\n・ルート3: 保有水平耐力計算\n\n■ 計算方針書の記載事項\n① 設計概要（階数、構造種別、用途）\n② 適用基準・法規\n③ 使用材料（樹種・等級・基準強度）\n④ 荷重条件（固定荷重、積載荷重、積雪、風圧、地震）\n⑤ 設計ルートの選定理由\n⑥ 構造計算ソフト名\n⑦ 基礎形式と地盤条件\n\n■ 3階建木造の場合\nルート1（許容応力度計算）+ 層間変形角1/120の検討が一般的。'},
-  {keywords:['安全証明書','証明書','確認申請'], answer:'【安全証明書について】\n\n建築基準法第20条第2項に基づき、構造設計者が安全性を証明する書類。\n\n■ 記載事項\n・建築物の名称・所在地\n・構造設計者の氏名・資格（構造設計一級建築士等）\n・設計に使用した基準・図書\n・構造種別、階数、最高高さ\n・安全であることの証明文\n\n■ 提出タイミング\n確認申請書に添付して提出。\n\n■ 注意点\n・構造設計一級建築士の関与が必要な規模（高さ>13m等）に注意\n・木造3階建ては構造計算適合性判定が不要（ルート1の場合）'},
-  {keywords:['屋根ふき材','屋根葺き材','耐風','ピーク風力'], answer:'【屋根ふき材の耐風検討】（令82条の4、平12建告1458号、令3改正）\n\n■ ピーク風力係数法\nW = q × Cf × A\nq = 0.6 × Er² × V0²\n\n■ Er（平均風速の高さ方向分布係数）\nEr = 1.7 × (Heff/ZG)^α\nHeff = max(H, Zb)\n※粗度IV: Zb=10m（他は5m）\n\n■ 風力係数Cf（4ゾーン）\nゾーンR1(一般部): Cf = -1.0〜-2.0（勾配依存）\nゾーンR2(軒先): Cf = -2.5\nゾーンR3(けらば): Cf = -3.2\nゾーンR4(隅角): Cf = -4.0\n\n■ 令3改正のポイント\n・瓦屋根: 全数緊結義務（ガイドライン工法）\n・「粗度区分」は建築物周辺の状況で判断\n\n計算ツールの「屋根葺き材の耐風検討」モジュールで計算できます。'},
-  {keywords:['スラブ','土間','ベタ基礎スラブ','σe'], answer:'【スラブ計算（ベタ基礎）】\n\n■ 接地圧の算定\nσe = (Σw - A×su - A×du - 床束荷重) / A\nA = Lx × Ly\nsu: スラブ自重(N/㎡), du: 土間コン自重(N/㎡)\n\n■ 曲げモーメント\n短辺端部: Mx1 = σex × Lx² / 8\n長辺端部: My1 = σe × Lx² / 12\n\n■ 配筋検定\n許容曲げモーメント Mad との比較\n検定比 = M / Mad ≤ 1.0\n\n計算ツールの「スラブ計算」モジュールで計算できます。'},
-  {keywords:['釘配列','Ixy','Zxy','Cxy','ベータ'], answer:'【釘配列定数の計算】（書籍3.2節準拠）\n\n■ 算定項目\nAw: 面材面積\nx0,y0: 弾性中立軸\nIx,Iy: 二次モーメント\nIxy = (Ix×Iy)/(Ix+Iy)/Aw\nZxy: 断面係数\nCxy: 塑性係数\nβ = Iy/Ix\n\n■ 釘配列タイプ\n川型: 外周＋内部縦線\n山型: 川型＋中央横線\n日型: 川型＋中央横線（重複除去）\n\n計算ツールの「釘配列定数計算」モジュールで計算できます。'},
+  {keywords:['壁量','壁量計算','必要壁量'], pages:[53,54,55,56], answer:'【壁量計算について】\n壁量計算は建築基準法施行令第46条に基づきます。\n\n必要壁量 = 床面積 × 必要壁量係数\n\n必要壁量係数（令46条）:\n・屋根が重い場合: 1階=33cm/㎡、2階=21cm/㎡\n・屋根が軽い場合: 1階=29cm/㎡、2階=15cm/㎡\n\n許容応力度計算ルートでは、四分割法または偏心率の検討が必要です。\n偏心率 ≤ 0.3 を満たすこと。\n\n書籍参照: 第2章 2.3節'},
+  {keywords:['風圧力','風圧','風力','風荷重'], pages:[50,51,52], answer:'【風圧力の算定】(令87条、平12建告1454号)\n\nQw = q × Cf × Aw\nq = 0.6 × E × V0²\nE = Er² × Gf\nEr = 1.7(H/ZG)^α\n\n地表面粗度区分:\nI: ZG=250, α=0.10\nII: ZG=350, α=0.15\nIII: ZG=450, α=0.20\nIV: ZG=550, α=0.27\n\n書籍参照: 第2章 2.2.2節 (P.50)'},
+  {keywords:['地震力','地震','層せん断力'], pages:[51,52], answer:'【地震力の算定】(令88条)\n\nQi = Ci × Wi\nCi = Z × Rt × Ai × Co\n\nCo = 0.2 (標準せん断力係数)\nZ: 地震地域係数 (0.7~1.0)\nRt: 振動特性係数\nAi: 地震層せん断力分布係数\n\n書籍参照: 第2章 2.2.3節'},
+  {keywords:['偏心率','偏心','4分割','四分割'], pages:[57,58], answer:'【偏心率の検定】\n\n偏心率 Rex = ex / rex\n\n許容応力度計算では偏心率 ≤ 0.3 が必要です。\n\n偏心率が0.3を超える場合は、壁配置の見直しが必要です。\n準耐力壁等を構造計算で耐力壁等を用いている場合は、四分割法および偏心率の計算に含める耐力要素に注意が必要です。\n\n書籍参照: 第2章 2.3.1節 (表2.3.3.1)'},
+  {keywords:['アンカーボルト','アンカー','M12','M16'], pages:[110,111], answer:'【アンカーボルト配置ルール】\n\n① 耐力壁両端部に配置（引抜力が発生していない場合、省略可）\n② 土台端部、継手部に配置（メス側は配置不可の場合、省略可）\n③ 上記以外の箇所は:\n  ・2階建: 2.7m以内\n  ・3階建: 2.0m以内\n\n【M12とM16の関係】\nM16(HD金物用)を配置した箇所にはM12の追加配置は不要。\n\n力の伝達経路:\nM12: 柱→土台→M12→基礎\nM16: 柱→M16→基礎 (直接基礎へ伝達)\n\n検討後確認→計算書3.1(1)'},
+  {keywords:['柱頭','柱脚','金物','N値'], pages:[85,86,87,88], answer:'【柱頭柱脚接合部】\n\n接合部の選定はN値計算法に基づきます。\n\n柱頭柱脚接合部の短期許容引張耐力(表2.4.4.1):\n・かすがい: 0.7 kN\n・山形プレートVP: 3.81 kN\n・L字金物: 5.36 kN\n・羽子板ボルト: 引き寄せ金物等\n\n【金物メーカー情報】\nカネシン:\n・ミドルコーナー10(10kN)\n・フレックスHD(それ以上)\n\nタナカ:\n・シナーコーナー床枠仕様(10kN)\n・オメガコーナー床枠仕様(15kN)\n\n注意: コーナー金物は直交梁の梁成差があってはならない\n合板タイプ30mmまで対応はあくまでも合板のみ\n\n書籍参照: 第2章 2.4.4節'},
+  {keywords:['水平構面','床構面','屋根構面','火打'], pages:[94,95,96,97], answer:'【水平構面の設計】\n\n水平構面は地震力・風圧力を耐力壁へ伝達する重要な構造要素です。\n\n種類:\n・床水平構面（根太無し工法等）\n・火打水平構面\n・屋根水平構面（垂木、登り梁）\n・勾配屋根水平構面\n\n水平構面を登り梁+24mm合板で取る場合:\n許容せん断耐力÷1.96 = 壁倍率換算\n\n屋根構面10寸超は詳細計算が必要\n\n書籍参照: 第2章 2.4.5-2.4.6節, 第3章 3.2節'},
+  {keywords:['狭小','狭小耐力壁','46条2項'], pages:[3,4,5], answer:'【狭小耐力壁（46条2項ルート）】\n\nこのルート適用の場合:\n・土台・柱・横架材はJAS材または集成材である必要あり\n・母屋・垂木については判断が分かれる可能性あり\n（昭和62年建設省告示第1898号の改正：平成28年国土交通省告示第792号参照）\n\n注意点:\n・耐力壁の間隔を455mmとする場合、内側からの施工に支障がなければ問題なし\n・「構造耐力上主要な部分」は長期・短期荷重を負担する部材を指す'},
+  {keywords:['ストラ','ストラデザイン','入力','手順'], pages:[], answer:'【ストラデザイン入力手順】\n\n① 新規立ち上げ → インポート（MPCAD8物件CSVデータ）→ 保存 → 計算 → 保存\n② 新規立ち上げ → インポート → マスター選択（ビルダー仕様）→ 保存 → 追加インポート①\n③ 梁全選択 → 梁仕口：自動\n④ 部屋編集（1FUB=土間、2F以上UB）\n⑤ 特殊壁入力（袖壁・界壁・小屋裏界壁・バルコニー壁・腰壁・下がり壁）\n\n基礎検討: ※2パターン行う\n・ピンまたは固定 → 4方向\n・自由端 → 2方向（※隅部浮き上がり検討）'},
+  {keywords:['基礎','自重','断面積'], pages:[152,153,154], answer:'【基礎梁自重計算】\n\n基礎梁の自重 = 断面積(m²) × RC単位体積重量(24 kN/m³)\n\n基準法規定:\n・布基礎: 根入れGL240mm以上、立上り300mm以上\n・ベタ基礎: 根入れGL120mm以上、立上り300mm以上\n\n主筋かぶり厚: 2-D13, 2-D16\n2段筋の場合は上主筋9mm・下主筋11mm\n\n腹金: 基本D-10は梁成600超えから入れる\n\n計算ツールの「基礎梁自重」モジュールで計算できます。'},
+  {keywords:['材料','基準強度','ヤング','無等級','JAS'], pages:[35,36,37,38,41,42], answer:'【材料の基準強度】\n\n木材の基準強度は平12建告1452号に定められています。\n\n主な樹種の基準強度(Fb/Ft/Fc/Fs):\n・すぎ: E=700 kN/cm² (無等級)\n・べいまつ: E=1000 kN/cm² (無等級)\n・べいつが: E=800 kN/cm² (無等級)\n\n無等級材の基準強度は表2.1.1.4を参照。\n\n機械等級区分材は表2.1.1.2, 2.1.1.3を参照。\n\n書籍参照: 第2章 2.1.1節'},
+  {keywords:['接地圧','布基礎','地盤'], pages:[152,153,154], answer:'【布基礎接地圧の計算】\n\nσe = W(壁荷重+基礎自重) / (L × B)\n\nW: 壁荷重(N/㎡) × 壁高さ(m) × 壁幅(m) + 基礎自重(N)\nL: 壁幅(m)\nB: 基礎下端幅(m)\n\nσe ≤ 地盤許容応力度 qa であること。\n\n計算ツールの「布基礎接地圧」モジュールで計算できます。'},
+  {keywords:['告示','告示仕様','仕様規定','建告','1460'], pages:[3,4,5], answer:'【告示仕様（仕様規定）】\n\n木造住宅の主な告示:\n\n■ 平12建告1460号（柱脚柱頭接合部）\n・N値計算法による金物選定の根拠告示\n・表の「い」〜「ぬ」で接合部仕様を規定\n\n■ 平12建告1458号（耐力壁の仕様）\n・壁倍率の認定基準\n・筋かい・面材耐力壁の仕様を規定\n\n■ 平12建告1452号（木材の基準強度）\n・樹種・等級ごとの基準強度Fb,Ft,Fc,Fs\n\n■ 令3改正告示（令和3年国交省告示）\n・屋根ふき材の緊結方法を強化\n・地表面粗度区分の定義を統一（建築物周辺）\n・瓦屋根: 全数緊結が原則（ガイドライン工法義務化）'},
+  {keywords:['大臣認定','認定','TBFC','性能評価'], pages:[], answer:'【大臣認定と性能評価】\n\n■ 大臣認定とは\n建築基準法に基づき、国土交通大臣が個別に性能を認定する制度。\n告示仕様に該当しない工法・材料を使用する場合に必要。\n\n■ 主な認定例（木造関係）\n・タルキックII（TBFC-0118）: 屋根水平構面のビス留め工法\n・ネダノン（面材床構面）\n・各メーカーの接合金物認定\n\n■ 認定書の見方\n・認定番号: TBFC-XXXX（床倍率認定）等\n・適用条件（垂木寸法、ピッチ、ビス仕様等）を厳守\n・計算書には認定書の写しを添付\n\n■ 性能評価機関\n・日本住宅・木材技術センター\n・日本建築総合試験所\n・ベターリビング'},
+  {keywords:['タルキック','TK','屋根倍率','ビス留め'], pages:[205,206,207], answer:'【タルキックII（TK-II）】\n大臣認定 TBFC-0118 / 屋根水平構面のビス留め工法\n\n■ 仕様と屋根(床)倍率\n仕様1: 垂木45×105, 間隔500以下, ビスP150以下 → 0.9×cosθ\n仕様2: 垂木45×105, 間隔500以下, ビスP100以下 → 1.1×cosθ\n仕様3: 垂木45×105, 間隔340以下, ビスP150以下 → 1.0×cosθ\n仕様4: 垂木45×105, 間隔340以下, ビスP100以下 → 1.3×cosθ\n仕様5: 垂木45×120, 間隔500以下, ビスP150以下 → 1.0×cosθ\n仕様6: 垂木45×120, 間隔500以下, ビスP100以下 → 1.5×cosθ\n\n■ cosθ参考値\n3寸勾配: 0.958 / 5寸勾配: 0.894 / 10寸勾配: 0.707\n\n■ ビス仕様\nTK-II 105: L=105, D1=5.30mm, ねじ径4.20mm\nTK-II 150: L=150, D1=5.55mm, ねじ径4.50mm\n\nリファレンスパネルの「タルキックII」タブに詳細データあり。'},
+  {keywords:['計算方針','ルート','設計方針','設計ルート'], pages:[3,4,5], answer:'【許容応力度計算の計算方針】\n\n■ 設計ルート\n・ルート1: 壁量計算(令46条) + 柱頭柱脚(令47条) + N値計算\n・ルート2: 許容応力度計算 + 層間変形角1/120以下\n・ルート3: 保有水平耐力計算\n\n■ 計算方針書の記載事項\n① 設計概要（階数、構造種別、用途）\n② 適用基準・法規\n③ 使用材料（樹種・等級・基準強度）\n④ 荷重条件（固定荷重、積載荷重、積雪、風圧、地震）\n⑤ 設計ルートの選定理由\n⑥ 構造計算ソフト名\n⑦ 基礎形式と地盤条件\n\n■ 3階建木造の場合\nルート1（許容応力度計算）+ 層間変形角1/120の検討が一般的。'},
+  {keywords:['安全証明書','証明書','確認申請'], pages:[], answer:'【安全証明書について】\n\n建築基準法第20条第2項に基づき、構造設計者が安全性を証明する書類。\n\n■ 記載事項\n・建築物の名称・所在地\n・構造設計者の氏名・資格（構造設計一級建築士等）\n・設計に使用した基準・図書\n・構造種別、階数、最高高さ\n・安全であることの証明文\n\n■ 提出タイミング\n確認申請書に添付して提出。\n\n■ 注意点\n・構造設計一級建築士の関与が必要な規模（高さ>13m等）に注意\n・木造3階建ては構造計算適合性判定が不要（ルート1の場合）'},
+  {keywords:['屋根ふき材','屋根葺き材','耐風','ピーク風力'], pages:[50,65,66], answer:'【屋根ふき材の耐風検討】（令82条の4、平12建告1458号、令3改正）\n\n■ ピーク風力係数法\nW = q × Cf × A\nq = 0.6 × Er² × V0²\n\n■ Er（平均風速の高さ方向分布係数）\nEr = 1.7 × (Heff/ZG)^α\nHeff = max(H, Zb)\n※粗度IV: Zb=10m（他は5m）\n\n■ 風力係数Cf（4ゾーン）\nゾーンR1(一般部): Cf = -1.0〜-2.0（勾配依存）\nゾーンR2(軒先): Cf = -2.5\nゾーンR3(けらば): Cf = -3.2\nゾーンR4(隅角): Cf = -4.0\n\n■ 令3改正のポイント\n・瓦屋根: 全数緊結義務（ガイドライン工法）\n・「粗度区分」は建築物周辺の状況で判断\n\n計算ツールの「屋根葺き材の耐風検討」モジュールで計算できます。'},
+  {keywords:['スラブ','土間','ベタ基礎スラブ','σe'], pages:[156,157,158], answer:'【スラブ計算（ベタ基礎）】\n\n■ 接地圧の算定\nσe = (Σw - A×su - A×du - 床束荷重) / A\nA = Lx × Ly\nsu: スラブ自重(N/㎡), du: 土間コン自重(N/㎡)\n\n■ 曲げモーメント\n短辺端部: Mx1 = σex × Lx² / 8\n長辺端部: My1 = σe × Lx² / 12\n\n■ 配筋検定\n許容曲げモーメント Mad との比較\n検定比 = M / Mad ≤ 1.0\n\n計算ツールの「スラブ計算」モジュールで計算できます。'},
+  {keywords:['釘配列','Ixy','Zxy','Cxy','ベータ'], pages:[220,221], answer:'【釘配列定数の計算】（書籍3.2節準拠）\n\n■ 算定項目\nAw: 面材面積\nx0,y0: 弾性中立軸\nIx,Iy: 二次モーメント\nIxy = (Ix×Iy)/(Ix+Iy)/Aw\nZxy: 断面係数\nCxy: 塑性係数\nβ = Iy/Ix\n\n■ 釘配列タイプ\n川型: 外周＋内部縦線\n山型: 川型＋中央横線\n日型: 川型＋中央横線（重複除去）\n\n計算ツールの「釘配列定数計算」モジュールで計算できます。'},
 ];
 
 function localQA(query) {
@@ -906,9 +994,9 @@ function localQA(query) {
     }
   }
   if (best && bestScore >= 1) {
-    return best.answer;
+    return {answer: best.answer, pages: best.pages || []};
   }
-  return 'ご質問に該当する情報が見つかりませんでした。\n\nキーワード例:\n・壁量計算 ・風圧力 ・地震力 ・偏心率\n・アンカーボルト ・柱頭柱脚金物 ・水平構面\n・基礎自重 ・接地圧 ・スラブ ・釘配列\n・告示仕様 ・大臣認定 ・タルキック\n・計算方針 ・安全証明書 ・屋根ふき材\n・ストラデザイン ・狭小耐力壁\n\nより正確な回答にはAPIキーを設定してAIモードをご利用ください。';
+  return {answer:'ご質問に該当する情報が見つかりませんでした。\n\nキーワード例:\n・壁量計算 ・風圧力 ・地震力 ・偏心率\n・アンカーボルト ・柱頭柱脚金物 ・水平構面\n・基礎自重 ・接地圧 ・スラブ ・釘配列\n・告示仕様 ・大臣認定 ・タルキック\n・計算方針 ・安全証明書 ・屋根ふき材\n・ストラデザイン ・狭小耐力壁\n\nより正確な回答にはAPIキーを設定してAIモードをご利用ください。', pages:[]};
 }
 
 // ============================================================
