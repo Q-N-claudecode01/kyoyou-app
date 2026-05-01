@@ -386,6 +386,29 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ============================================================
+// 数値入力フィールド: フォーカス/クリック時に全選択 (PC/iPhone両対応)
+// ============================================================
+// 除外したい入力ID（チャット・APIキー・プロジェクト名など自由入力系）
+const NO_AUTO_SELECT_IDS = new Set(['chatInput','apiKeyInput','print_project']);
+function autoSelectInput(t) {
+  if (!(t instanceof HTMLInputElement)) return;
+  if (t.type !== 'number' && t.type !== 'text') return;
+  if (NO_AUTO_SELECT_IDS.has(t.id)) return;
+  if (t.readOnly || t.disabled) return;
+  // setTimeout で iOS/Android のクリック後カーソル配置を上書き
+  setTimeout(() => { try { t.select(); } catch(_){} }, 0);
+}
+document.addEventListener('focusin', (e) => autoSelectInput(e.target), true);
+// iOSはfocusinだけでは効かない事があるためclickでもselect
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (document.activeElement !== t) return;
+  if (t && t.selectionStart !== null && t.selectionStart === t.selectionEnd) {
+    autoSelectInput(t);
+  }
+}, true);
+
+// ============================================================
 // TAB & MODULE SWITCHING
 // ============================================================
 function switchTab(tab) {
