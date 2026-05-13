@@ -327,7 +327,7 @@ canvas { border:1px solid var(--gray-200); border-radius:8px; background:var(--w
         <span style="font-size:11px;color:var(--gray-600);margin-left:auto;">書籍・実務ノウハウから回答</span>
       </div>
       <div class="chat-messages" id="chatMessages">
-        <div class="msg system">許容応力度設計に関する質問をどうぞ。APIキーを設定するとAIが回答します。</div>
+        <div class="msg system">許容応力度設計に関する質問をどうぞ。書籍「木造軸組み工法住宅の許容応力度設計①_2025年版」の全414ページから関連箇所を検索します。<br>例：「壁量」「N値」「タルキック」「層間変形角」「スラブ厚」など、自由なキーワードでOK。</div>
       </div>
       <div class="chat-input-area">
         <textarea id="chatInput" placeholder="質問を入力... (Enter で送信、Shift+Enter で改行)" onkeydown="handleChatKey(event)"></textarea>
@@ -975,16 +975,98 @@ function openBookPage(src, pageNum) {
     </div>`;
 }
 
-function sendChat() {
+async function sendChat() {
   const input = document.getElementById('chatInput');
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
   addMessage('user', text);
   chatHistory.push({role:'user', content:text});
-  const result = localQA(text);
+  const result = await localQA(text);
   addMessage('assistant', result.answer, result.pages);
   chatHistory.push({role:'assistant', content:result.answer});
+}
+
+// ============================================================
+// 書籍全文インデックス（OCR済み）
+// book_pages/ocr_text.json: { "1": "...", "2": "...", ..., "414": "..." }
+// ============================================================
+let bookIndex = null;
+let bookIndexLoadPromise = null;
+
+async function loadBookIndex() {
+  if (bookIndex !== null) return bookIndex;
+  if (bookIndexLoadPromise) return bookIndexLoadPromise;
+  bookIndexLoadPromise = (async () => {
+    try {
+      const res = await fetch('book_pages/ocr_text.json');
+      if (!res.ok) throw new Error('not found');
+      bookIndex = await res.json();
+    } catch(e) {
+      console.warn('book_index not loaded:', e);
+      bookIndex = {};
+    }
+    return bookIndex;
+  })();
+  return bookIndexLoadPromise;
+}
+
+function escRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// クエリから検索トークンを生成
+function tokenizeQuery(q) {
+  const tokens = new Set();
+  const cleaned = q.replace(/[？?！!。、,\.\s（）()「」【】\[\]]/g, ' ').trim();
+  // スペース分割
+  for (const w of cleaned.split(/\s+/)) {
+    if (w.length >= 2) tokens.add(w);
+  }
+  // 全体も入れる（短すぎる場合のみ）
+  if (cleaned.length >= 2 && cleaned.length <= 15) tokens.add(cleaned);
+  return [...tokens];
+}
+
+// 全文検索: クエリにヒットするページを上位N件返す
+function searchBookIndex(query, topN=10) {
+  if (!bookIndex || Object.keys(bookIndex).length === 0) return [];
+  const tokens = tokenizeQuery(query);
+  if (tokens.length === 0) return [];
+  const scores = {};
+  for (const [page, text] of Object.entries(bookIndex)) {
+    if (!text) continue;
+    let score = 0;
+    for (const tk of tokens) {
+      try {
+        const m = text.match(new RegExp(escRegex(tk), 'g'));
+        if (m) score += m.length * (tk.length >= 3 ? 2 : 1);
+      } catch(e) {}
+    }
+    if (score > 0) scores[page] = score;
+  }
+  return Object.entries(scores)
+    .sort((a,b) => b[1] - a[1])
+    .slice(0, topN)
+    .map(([p]) => parseInt(p));
+}
+
+// 検索ヒット時の抜粋テキスト生成（前後30文字）
+function getSnippet(pageNum, query, maxLen=80) {
+  if (!bookIndex) return '';
+  const text = bookIndex[pageNum];
+  if (!text) return '';
+  const tokens = tokenizeQuery(query);
+  for (const tk of tokens) {
+    const idx = text.indexOf(tk);
+    if (idx >= 0) {
+      const start = Math.max(0, idx - 20);
+      const end = Math.min(text.length, idx + tk.length + 30);
+      let s = text.substring(start, end);
+      if (start > 0) s = '…' + s;
+      if (end < text.length) s = s + '…';
+      return s;
+    }
+  }
+  return text.substring(0, maxLen) + (text.length > maxLen ? '…' : '');
 }
 
 // Local Q&A knowledge base
@@ -1012,7 +1094,10 @@ const qaDB = [
   {keywords:['釘配列','Ixy','Zxy','Cxy','ベータ'], pages:[220,221], answer:'【釘配列定数の計算】（書籍3.2節準拠）\n\n■ 算定項目\nAw: 面材面積\nx0,y0: 弾性中立軸\nIx,Iy: 二次モーメント\nIxy = (Ix×Iy)/(Ix+Iy)/Aw\nZxy: 断面係数\nCxy: 塑性係数\nβ = Iy/Ix\n\n■ 釘配列タイプ\n川型: 外周＋内部縦線\n山型: 川型＋中央横線\n日型: 川型＋中央横線（重複除去）\n\n計算ツールの「釘配列定数計算」モジュールで計算できます。'},
 ];
 
-function localQA(query) {
+async function localQA(query) {
+  // 書籍インデックスをロード（初回のみ）
+  await loadBookIndex();
+
   const q = query.toLowerCase();
   let best = null, bestScore = 0;
   for (const item of qaDB) {
@@ -1029,10 +1114,31 @@ function localQA(query) {
       best = item;
     }
   }
+
+  // 全文検索（OCRインデックス）でヒットしたページ
+  const ftPages = searchBookIndex(query, 10);
+
+  // qaDBにマッチした場合：解説 + 関連ページ（curated + 全文検索結果を統合）
   if (best && bestScore >= 1) {
-    return {answer: best.answer, pages: best.pages || []};
+    const merged = [];
+    for (const p of (best.pages || [])) if (!merged.includes(p)) merged.push(p);
+    for (const p of ftPages) if (!merged.includes(p)) merged.push(p);
+    return {answer: best.answer, pages: merged.slice(0, 12)};
   }
-  return {answer:'ご質問に該当する情報が見つかりませんでした。\n\nキーワード例:\n・壁量計算 ・風圧力 ・地震力 ・偏心率\n・アンカーボルト ・柱頭柱脚金物 ・水平構面\n・基礎自重 ・接地圧 ・スラブ ・釘配列\n・告示仕様 ・大臣認定 ・タルキック\n・計算方針 ・安全証明書 ・屋根ふき材\n・ストラデザイン ・狭小耐力壁\n\nより正確な回答にはAPIキーを設定してAIモードをご利用ください。', pages:[]};
+
+  // qaDBに無いが全文検索でヒット → ページ提示
+  if (ftPages.length > 0) {
+    const snippetLines = ftPages.slice(0, 5).map(p => {
+      const sn = getSnippet(p, query, 80);
+      return `・P.${p}: ${sn || '(本文抜粋なし)'}`;
+    }).join('\n');
+    return {
+      answer: `「${query}」を書籍内で検索しました。\n\n${ftPages.length}ページで関連記載が見つかりました。\nクリックすると拡大表示できます。\n\n${snippetLines}`,
+      pages: ftPages
+    };
+  }
+
+  return {answer:'ご質問に該当する情報が書籍内で見つかりませんでした。\n\nキーワード例:\n・壁量計算 ・風圧力 ・地震力 ・偏心率\n・アンカーボルト ・柱頭柱脚金物 ・水平構面\n・基礎自重 ・接地圧 ・スラブ ・釘配列\n・告示仕様 ・大臣認定 ・タルキック\n・計算方針 ・安全証明書 ・屋根ふき材\n・ストラデザイン ・狭小耐力壁\n\n別の言い回し・短いキーワードでもお試しください。', pages:[]};
 }
 
 // ============================================================
