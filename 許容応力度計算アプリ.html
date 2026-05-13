@@ -1013,17 +1013,40 @@ async function loadBookIndex() {
 
 function escRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-// クエリから検索トークンを生成
+// クエリから検索トークンを生成（日本語助詞・複合語対応）
+const STOP_PARTICLES = ['とは','について','の方法','の計算','の算定','の検討','とは何か','どうやって','どのように','について教えて','を教えて','について知りたい','とは何','の意味','の定義','とはなにか','なにか','なに'];
+const PARTICLES_SPLIT = /[のがをにはへとでもや、？！。\s（）()「」【】\[\]]+/g;
+
 function tokenizeQuery(q) {
   const tokens = new Set();
-  const cleaned = q.replace(/[？?！!。、,\.\s（）()「」【】\[\]]/g, ' ').trim();
-  // スペース分割
-  for (const w of cleaned.split(/\s+/)) {
-    if (w.length >= 2) tokens.add(w);
+  let cleaned = q.trim();
+  // 末尾の質問語尾を除去
+  for (const sw of STOP_PARTICLES) {
+    if (cleaned.endsWith(sw)) cleaned = cleaned.slice(0, -sw.length);
   }
-  // 全体も入れる（短すぎる場合のみ）
-  if (cleaned.length >= 2 && cleaned.length <= 15) tokens.add(cleaned);
-  return [...tokens];
+  cleaned = cleaned.replace(/\?+$/, '').replace(/？+$/, '').trim();
+
+  // 助詞・記号で分割した名詞句
+  const parts = cleaned.split(PARTICLES_SPLIT).filter(s => s.length >= 2);
+  for (const p of parts) tokens.add(p);
+
+  // 全体（残ったcleaned）も追加
+  if (cleaned.length >= 2 && cleaned.length <= 20) tokens.add(cleaned);
+
+  // 長い句は2-gram, 3-gram も生成（複合語の部分一致用）
+  for (const p of [...parts, cleaned]) {
+    if (p.length >= 4 && p.length <= 12) {
+      // 3-gram windows
+      for (let i = 0; i <= p.length - 3; i++) {
+        tokens.add(p.substring(i, i+3));
+      }
+    }
+  }
+
+  // 1文字の漢字のみのクエリは1-charも許容（例: 「釘」「梁」「柱」）
+  if (cleaned.length === 1 && /[一-龥]/.test(cleaned)) tokens.add(cleaned);
+
+  return [...tokens].filter(t => t.length >= 2 || /^[一-龥]$/.test(t));
 }
 
 // 全文検索: クエリにヒットするページを上位N件返す
