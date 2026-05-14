@@ -600,8 +600,10 @@ modules.unitload = {
   renderInput() {
     return `
       <div class="section-title">単位荷重計算</div>
-      <div class="info-box">建材をクリックして選択 → 自動で荷重が積み上げられます。カスタム建材も追加可能。</div>
-      <h4 style="margin:12px 0 8px;color:var(--navy);">建材データベース <span style="font-size:11px;color:var(--gray-400);font-weight:400;">クリックで追加</span></h4>
+      <div class="info-box">建材・積雪などの項目を<b>それぞれ個別に</b>計算できます。各セクションの計算ボタンを押すと、その項目だけ結果に反映されます。下部の「まとめて計算」で全項目を一括計算も可能です。</div>
+
+      <h4 style="margin:12px 0 8px;color:var(--navy);">① 建材荷重</h4>
+      <div style="font-size:11px;color:var(--gray-400);margin-bottom:4px;">建材データベース（クリックで追加）</div>
       <div id="matCatalog" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;"></div>
       <div class="form-row">
         <div class="form-group"><label>建材名</label><input type="text" id="mat_name" value="" placeholder="カスタム建材"></div>
@@ -609,41 +611,64 @@ modules.unitload = {
         <div class="form-group"><label>比重</label><input type="number" id="mat_d" value="0.68" step="0.01"></div>
       </div>
       <button class="btn btn-secondary" style="margin-bottom:12px;" onclick="addCustomMaterial()">+ カスタム追加</button>
-      <h4 style="margin:8px 0;color:var(--navy);">選択済み建材</h4>
       <table class="material-table" id="matTable">
         <thead><tr><th>建材名</th><th>厚さ</th><th>比重</th><th>荷重</th><th></th></tr></thead>
         <tbody id="matBody"></tbody>
         <tfoot><tr style="font-weight:700;background:var(--gray-100);"><td colspan="3">合計</td><td id="matTotal">0 N/m&sup2;</td><td></td></tr></tfoot>
       </table>
+      <button class="btn btn-primary" style="margin:8px 0;width:100%;" onclick="calcMat()">① 建材荷重を計算</button>
       <hr style="margin:16px 0;border:none;border-top:1px solid var(--gray-200);">
-      <h4 style="margin:0 0 8px;color:var(--navy);">積雪荷重</h4>
+
+      <h4 style="margin:0 0 8px;color:var(--navy);">② 積雪荷重</h4>
       <div class="form-row">
+        <div class="form-group"><label>区域</label><select id="snow_region" onchange="onSnowRegionChange()">
+          <option value="general">一般区域</option>
+          <option value="heavy">多雪区域</option>
+        </select></div>
         <div class="form-group"><label>単位荷重 (N/cm/m&sup2;)</label><input type="number" id="snow_unit" value="20"></div>
+      </div>
+      <div class="form-row">
         <div class="form-group"><label>積雪深 (cm)</label><input type="number" id="snow_depth" value="30"></div>
+        <div class="form-group"><label>屋根形状係数 &mu;b</label><input type="number" id="snow_mu" value="1.0" step="0.1"></div>
         <div class="form-group"><label>負担幅 (m)</label><input type="number" id="snow_span" value="0.91" step="0.01"></div>
       </div>
+      <button class="btn btn-primary" style="margin:8px 0;width:100%;" onclick="calcSnow()">② 積雪荷重を計算</button>
       <hr style="margin:16px 0;border:none;border-top:1px solid var(--gray-200);">
-      <h4 style="margin:0 0 8px;color:var(--navy);">土間コンクリート</h4>
+
+      <h4 style="margin:0 0 8px;color:var(--navy);">③ 土間コンクリート</h4>
       <div class="form-row">
         <div class="form-group"><label>厚さ (mm)</label><input type="number" id="doma_t" value="281"></div>
         <div class="form-group"><label>RC単位重量 (kN/m&sup3;)</label><input type="number" id="doma_gamma" value="23.5" step="0.1"></div>
       </div>
+      <button class="btn btn-primary" style="margin:8px 0;width:100%;" onclick="calcDoma()">③ 土間荷重を計算</button>
       <hr style="margin:16px 0;border:none;border-top:1px solid var(--gray-200);">
-      <h4 style="margin:0 0 8px;color:var(--navy);">壁荷重 (線荷重換算)</h4>
+
+      <h4 style="margin:0 0 8px;color:var(--navy);">④ 壁荷重 (線荷重換算)</h4>
       <div class="form-row">
         <div class="form-group"><label>壁単位荷重 (N/m&sup2;)</label><input type="number" id="wall_w" value="750"></div>
         <div class="form-group"><label>壁高さ (m)</label><input type="number" id="wall_h" value="4.6" step="0.1"></div>
       </div>
+      <button class="btn btn-primary" style="margin:8px 0;width:100%;" onclick="calcWall()">④ 壁荷重を計算</button>
       <hr style="margin:16px 0;border:none;border-top:1px solid var(--gray-200);">
-      <h4 style="margin:0 0 8px;color:var(--navy);">庇荷重</h4>
+
+      <h4 style="margin:0 0 8px;color:var(--navy);">⑤ 庇荷重</h4>
       <div class="form-row">
         <div class="form-group"><label>庇荷重 (N/m&sup2;)</label><input type="number" id="hisashi_w" value="300"></div>
         <div class="form-group"><label>出幅 (m)</label><input type="number" id="hisashi_d" value="0.68" step="0.01"></div>
       </div>
-      <button class="btn btn-primary" style="margin-top:16px;width:100%;" onclick="calcUnitLoad()">計算実行</button>
+      <button class="btn btn-primary" style="margin:8px 0;width:100%;" onclick="calcHisashi()">⑤ 庇荷重を計算</button>
+      <hr style="margin:16px 0;border:none;border-top:1px solid var(--gray-200);">
+
+      <button class="btn btn-secondary" style="margin-top:8px;width:100%;" onclick="calcUnitLoad()">すべての項目をまとめて計算</button>
     `;
   },
-  afterRender() { renderCatalog(); renderSelectedMats(); calcUnitLoad(); }
+  afterRender() {
+    renderCatalog();
+    renderSelectedMats();
+    const res = document.getElementById('calc-result-area');
+    if (res) res.innerHTML = '<div id="ul-res-mat"></div><div id="ul-res-snow"></div><div id="ul-res-doma"></div><div id="ul-res-wall"></div><div id="ul-res-hisashi"></div>';
+    calcUnitLoad();
+  }
 };
 
 const matCatalog = [
@@ -699,7 +724,7 @@ function selectMat(i) {
   const m = matCatalog[i];
   selectedMats.push({...m});
   renderSelectedMats();
-  calcUnitLoad();
+  calcMat();
 }
 function addCustomMaterial() {
   const name = document.getElementById('mat_name').value || 'カスタム';
@@ -708,12 +733,12 @@ function addCustomMaterial() {
   if (t <= 0 || d <= 0) return;
   selectedMats.push({name, t, d});
   renderSelectedMats();
-  calcUnitLoad();
+  calcMat();
 }
 function removeSelectedMat(i) {
   selectedMats.splice(i, 1);
   renderSelectedMats();
-  calcUnitLoad();
+  calcMat();
 }
 function renderSelectedMats() {
   const tb = document.getElementById('matBody');
@@ -727,46 +752,102 @@ function renderSelectedMats() {
   if (tot) tot.innerHTML = `<b>${total.toFixed(1)}</b> N/m&sup2;`;
 }
 
-function calcUnitLoad() {
-  const snowU = N('snow_unit'), snowD = N('snow_depth'), snowSpan = N('snow_span');
-  const snowArea = snowU * snowD;
-  const snowLine = snowArea * snowSpan;
-  const domaT = N('doma_t'), domaG = N('doma_gamma');
-  const domaLoad = (domaT / 1000) * domaG * 1000;
-  const wallW = N('wall_w'), wallH = N('wall_h');
-  const wallLine = wallW * wallH;
-  const hisW = N('hisashi_w'), hisD = N('hisashi_d');
-  const hisLine = hisW * hisD;
-  const totalMat = selectedMats.reduce((s,m) => s + m.t * m.d, 0);
+// 結果エリアに個別カード枠が無ければ用意（他モジュールから戻った場合の保険）
+function ensureUnitLoadFrame() {
   const res = document.getElementById('calc-result-area');
-  res.innerHTML = `
+  if (res && !document.getElementById('ul-res-mat')) {
+    res.innerHTML = '<div id="ul-res-mat"></div><div id="ul-res-snow"></div><div id="ul-res-doma"></div><div id="ul-res-wall"></div><div id="ul-res-hisashi"></div>';
+  }
+}
+
+// 区域選択 → 単位荷重を自動セット（一般20 / 多雪30）
+function onSnowRegionChange() {
+  const region = document.getElementById('snow_region').value;
+  const unitEl = document.getElementById('snow_unit');
+  if (unitEl) unitEl.value = (region === 'heavy') ? 30 : 20;
+}
+
+// ① 建材荷重 — 単独計算
+function calcMat() {
+  ensureUnitLoadFrame();
+  const el = document.getElementById('ul-res-mat');
+  if (!el) return;
+  const totalMat = selectedMats.reduce((s,m) => s + m.t * m.d, 0);
+  el.innerHTML = `
     <div class="result-highlight">
-      <div>建材合計単位荷重</div>
+      <div>① 建材合計単位荷重</div>
       <div><span class="big">${totalMat.toFixed(1)}</span> <span class="unit">N/m&sup2;</span></div>
     </div>
     ${selectedMats.length > 0 ? `<div class="result-card">
       <h3>選択建材の内訳</h3>
       ${selectedMats.map(m => `<div class="result-row"><span class="result-label">${m.name} ${m.t}mm (比重${m.d})</span><span class="result-value">${(m.t*m.d).toFixed(1)} N/m&sup2;</span></div>`).join('')}
       <div class="result-row" style="font-weight:700;border-top:2px solid var(--gray-300);"><span class="result-label">合計</span><span class="result-value">${totalMat.toFixed(1)} N/m&sup2;</span></div>
-    </div>` : '<div class="info-box">建材を選択してください</div>'}
+    </div>` : '<div class="info-box">建材を選択してください</div>'}`;
+}
+
+// ② 積雪荷重 — 単独計算（μb・区域対応）
+function calcSnow() {
+  ensureUnitLoadFrame();
+  const el = document.getElementById('ul-res-snow');
+  if (!el) return;
+  const snowU = N('snow_unit'), snowD = N('snow_depth'), snowSpan = N('snow_span');
+  const snowMu = N('snow_mu') || 1.0;
+  const snowArea = snowU * snowD * snowMu;
+  const snowLine = snowArea * snowSpan;
+  el.innerHTML = `
     <div class="result-card">
-      <h3>積雪荷重</h3>
-      <div class="result-row"><span class="result-label">${snowU} N/cm/m&sup2; &times; ${snowD} cm</span><span class="result-value">${snowArea.toFixed(0)} N/m&sup2;</span></div>
+      <h3>② 積雪荷重</h3>
+      <div class="result-row"><span class="result-label">${snowU} N/cm/m&sup2; &times; ${snowD} cm &times; &mu;b ${snowMu}</span><span class="result-value">${snowArea.toFixed(0)} N/m&sup2;</span></div>
       <div class="result-row"><span class="result-label">線荷重 (&times;${snowSpan}m)</span><span class="result-value">${snowLine.toFixed(0)} N/m</span></div>
-    </div>
+    </div>`;
+}
+
+// ③ 土間コンクリート — 単独計算
+function calcDoma() {
+  ensureUnitLoadFrame();
+  const el = document.getElementById('ul-res-doma');
+  if (!el) return;
+  const domaT = N('doma_t'), domaG = N('doma_gamma');
+  const domaLoad = (domaT / 1000) * domaG * 1000;
+  el.innerHTML = `
     <div class="result-card">
-      <h3>土間コンクリート</h3>
+      <h3>③ 土間コンクリート</h3>
       <div class="result-row"><span class="result-label">${domaT}mm &times; ${domaG} kN/m&sup3;</span><span class="result-value">${domaLoad.toFixed(1)} N/m&sup2;</span></div>
-    </div>
+    </div>`;
+}
+
+// ④ 壁荷重 — 単独計算
+function calcWall() {
+  ensureUnitLoadFrame();
+  const el = document.getElementById('ul-res-wall');
+  if (!el) return;
+  const wallW = N('wall_w'), wallH = N('wall_h');
+  const wallLine = wallW * wallH;
+  el.innerHTML = `
     <div class="result-card">
-      <h3>壁荷重 (線荷重)</h3>
+      <h3>④ 壁荷重 (線荷重)</h3>
       <div class="result-row"><span class="result-label">${wallW} N/m&sup2; &times; ${wallH} m</span><span class="result-value">${wallLine.toFixed(0)} N/m</span></div>
-    </div>
+    </div>`;
+}
+
+// ⑤ 庇荷重 — 単独計算
+function calcHisashi() {
+  ensureUnitLoadFrame();
+  const el = document.getElementById('ul-res-hisashi');
+  if (!el) return;
+  const hisW = N('hisashi_w'), hisD = N('hisashi_d');
+  const hisLine = hisW * hisD;
+  el.innerHTML = `
     <div class="result-card">
-      <h3>庇荷重 (線荷重)</h3>
+      <h3>⑤ 庇荷重 (線荷重)</h3>
       <div class="result-row"><span class="result-label">${hisW} N/m&sup2; &times; ${hisD} m</span><span class="result-value">${hisLine.toFixed(0)} N/m</span></div>
-    </div>
-  `;
+    </div>`;
+}
+
+// すべての項目をまとめて計算
+function calcUnitLoad() {
+  ensureUnitLoadFrame();
+  calcMat(); calcSnow(); calcDoma(); calcWall(); calcHisashi();
 }
 
 // --- 3. Angle of Repose ---
