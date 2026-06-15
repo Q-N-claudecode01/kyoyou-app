@@ -1005,12 +1005,29 @@ function handleChatKey(e) {
   }
 }
 
-function addMessage(role, text, pages, query) {
+function isLocalEnv() {
+  // 公開版(GitHub Pages)以外（localhost/file:// 等）ならローカル資料PDFを開ける
+  return !/github\.io$/i.test(location.hostname);
+}
+
+function addMessage(role, text, pages, query, docs) {
   const el = document.getElementById('chatMessages');
   const div = document.createElement('div');
   div.className = 'msg ' + role;
   div.textContent = text;
   el.appendChild(div);
+  // 関連PDF（手元資料）リンク：ローカル環境のみ表示（公開版は著作権配慮で非表示）
+  if (role === 'assistant' && docs && docs.length > 0 && isLocalEnv()) {
+    const dWrap = document.createElement('div');
+    dWrap.className = 'msg assistant';
+    dWrap.style.cssText = 'background:transparent;border:none;padding:0;max-width:90%;align-self:flex-start;';
+    dWrap.innerHTML = `
+      <div style="font-size:11px;color:var(--gray-600);margin-bottom:6px;">📄 関連PDF（手元資料）— クリックで開く</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${docs.map(d => `<a href="${encodeURI(d.file)}" target="_blank" rel="noopener" style="display:inline-block;padding:8px 12px;background:#fff;border:1px solid var(--gray-300);border-radius:6px;font-size:12px;color:var(--navy);text-decoration:none;box-shadow:0 1px 3px rgba(0,0,0,.08);">📄 ${d.label.replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</a>`).join('')}
+      </div>`;
+    el.appendChild(dWrap);
+  }
   // 該当PDFページがあればサムネイル表示（公開版=book_pages無しでは抑止）
   if (role === 'assistant' && pages && pages.length > 0 && bookIndexAvailable) {
     const pgWrap = document.createElement('div');
@@ -1109,7 +1126,7 @@ async function sendChat() {
   addMessage('user', text);
   chatHistory.push({role:'user', content:text});
   const result = await localQA(text);
-  addMessage('assistant', result.answer, result.pages, text);
+  addMessage('assistant', result.answer, result.pages, text, result.docs);
   chatHistory.push({role:'assistant', content:result.answer});
 }
 
@@ -1238,7 +1255,12 @@ const qaDB = [
   {keywords:['接地圧','布基礎','地盤'], pages:[152,153,154], answer:'【布基礎接地圧の計算】\n\nσe = W(壁荷重+基礎自重) / (L × B)\n\nW: 壁荷重(N/㎡) × 壁高さ(m) × 壁幅(m) + 基礎自重(N)\nL: 壁幅(m)\nB: 基礎下端幅(m)\n\nσe ≤ 地盤許容応力度 qa であること。\n\n計算ツールの「布基礎接地圧」モジュールで計算できます。'},
   {keywords:['告示','告示仕様','仕様規定','建告','1460'], pages:[3,4,5], answer:'【告示仕様（仕様規定）】\n\n木造住宅の主な告示:\n\n■ 平12建告1460号（柱脚柱頭接合部）\n・N値計算法による金物選定の根拠告示\n・表の「い」〜「ぬ」で接合部仕様を規定\n\n■ 平12建告1458号（耐力壁の仕様）\n・壁倍率の認定基準\n・筋かい・面材耐力壁の仕様を規定\n\n■ 平12建告1452号（木材の基準強度）\n・樹種・等級ごとの基準強度Fb,Ft,Fc,Fs\n\n■ 令3改正告示（令和3年国交省告示）\n・屋根ふき材の緊結方法を強化\n・地表面粗度区分の定義を統一（建築物周辺）\n・瓦屋根: 全数緊結が原則（ガイドライン工法義務化）'},
   {keywords:['大臣認定','認定','TBFC','性能評価'], pages:[], answer:'【大臣認定と性能評価】\n\n■ 大臣認定とは\n建築基準法に基づき、国土交通大臣が個別に性能を認定する制度。\n告示仕様に該当しない工法・材料を使用する場合に必要。\n\n■ 主な認定例（木造関係）\n・タルキックII（TBFC-0118）: 屋根水平構面のビス留め工法\n・ネダノン（面材床構面）\n・各メーカーの接合金物認定\n\n■ 認定書の見方\n・認定番号: TBFC-XXXX（床倍率認定）等\n・適用条件（垂木寸法、ピッチ、ビス仕様等）を厳守\n・計算書には認定書の写しを添付\n\n■ 性能評価機関\n・日本住宅・木材技術センター\n・日本建築総合試験所\n・ベターリビング'},
-  {keywords:['タルキック','TK','屋根倍率','ビス留め'], pages:[205,206,207], answer:'【タルキックII（TK-II）】\n大臣認定 TBFC-0118 / 屋根水平構面のビス留め工法\n\n■ 仕様と屋根(床)倍率\n仕様1: 垂木45×105, 間隔500以下, ビスP150以下 → 0.9×cosθ\n仕様2: 垂木45×105, 間隔500以下, ビスP100以下 → 1.1×cosθ\n仕様3: 垂木45×105, 間隔340以下, ビスP150以下 → 1.0×cosθ\n仕様4: 垂木45×105, 間隔340以下, ビスP100以下 → 1.3×cosθ\n仕様5: 垂木45×120, 間隔500以下, ビスP150以下 → 1.0×cosθ\n仕様6: 垂木45×120, 間隔500以下, ビスP100以下 → 1.5×cosθ\n\n■ cosθ参考値\n3寸勾配: 0.958 / 5寸勾配: 0.894 / 10寸勾配: 0.707\n\n■ ビス仕様\nTK-II 105: L=105, D1=5.30mm, ねじ径4.20mm\nTK-II 150: L=150, D1=5.55mm, ねじ径4.50mm\n\nリファレンスパネルの「タルキックII」タブに詳細データあり。'},
+  {keywords:['タルキック','TK','屋根倍率','ビス留め'], pages:[], docs:[
+      {label:'タルキックⅡ カタログ', file:'タルキックⅡ/【タルキックⅡ】tk-catalog_new.pdf'},
+      {label:'TK 屋根倍率計算書 (成105)', file:'タルキックⅡ/TK_成105 屋根倍率計算書 2017年度版_20230801.pdf'},
+      {label:'TK-Ⅱ 検査機関提出資料', file:'タルキックⅡ/TK-Ⅱ_検査機関提出資料.pdf'},
+      {label:'TKⅡ 屋根構面評価書 別紙(HP評価)', file:'タルキックⅡ/TKⅡ屋根構面評価書 別紙 HP評価(木)19-005-1 20200305.pdf'}
+    ], answer:'【タルキックII（TK-II）】\n大臣認定 TBFC-0118 / 屋根水平構面のビス留め工法\n※書籍①には収録なし。下の関連PDF（手元資料）を参照。\n\n■ 仕様と屋根(床)倍率\n仕様1: 垂木45×105, 間隔500以下, ビスP150以下 → 0.9×cosθ\n仕様2: 垂木45×105, 間隔500以下, ビスP100以下 → 1.1×cosθ\n仕様3: 垂木45×105, 間隔340以下, ビスP150以下 → 1.0×cosθ\n仕様4: 垂木45×105, 間隔340以下, ビスP100以下 → 1.3×cosθ\n仕様5: 垂木45×120, 間隔500以下, ビスP150以下 → 1.0×cosθ\n仕様6: 垂木45×120, 間隔500以下, ビスP100以下 → 1.5×cosθ\n\n■ cosθ参考値\n3寸勾配: 0.958 / 5寸勾配: 0.894 / 10寸勾配: 0.707\n\n■ ビス仕様\nTK-II 105: L=105, D1=5.30mm, ねじ径4.20mm\nTK-II 150: L=150, D1=5.55mm, ねじ径4.50mm\n\nリファレンスパネルの「タルキックII」タブに詳細データあり。'},
   {keywords:['計算方針','ルート','設計方針','設計ルート'], pages:[3,4,5], answer:'【許容応力度計算の計算方針】\n\n■ 設計ルート\n・ルート1: 壁量計算(令46条) + 柱頭柱脚(令47条) + N値計算\n・ルート2: 許容応力度計算 + 層間変形角1/120以下\n・ルート3: 保有水平耐力計算\n\n■ 計算方針書の記載事項\n① 設計概要（階数、構造種別、用途）\n② 適用基準・法規\n③ 使用材料（樹種・等級・基準強度）\n④ 荷重条件（固定荷重、積載荷重、積雪、風圧、地震）\n⑤ 設計ルートの選定理由\n⑥ 構造計算ソフト名\n⑦ 基礎形式と地盤条件\n\n■ 3階建木造の場合\nルート1（許容応力度計算）+ 層間変形角1/120の検討が一般的。'},
   {keywords:['安全証明書','証明書','確認申請'], pages:[], answer:'【安全証明書について】\n\n建築基準法第20条第2項に基づき、構造設計者が安全性を証明する書類。\n\n■ 記載事項\n・建築物の名称・所在地\n・構造設計者の氏名・資格（構造設計一級建築士等）\n・設計に使用した基準・図書\n・構造種別、階数、最高高さ\n・安全であることの証明文\n\n■ 提出タイミング\n確認申請書に添付して提出。\n\n■ 注意点\n・構造設計一級建築士の関与が必要な規模（高さ>13m等）に注意\n・木造3階建ては構造計算適合性判定が不要（ルート1の場合）'},
   {keywords:['屋根ふき材','屋根葺き材','耐風','ピーク風力'], pages:[50,65,66], answer:'【屋根ふき材の耐風検討】（令82条の4、平12建告1458号、令3改正）\n\n■ ピーク風力係数法\nW = q × Cf × A\nq = 0.6 × Er² × V0²\n\n■ Er（平均風速の高さ方向分布係数）\nEr = 1.7 × (Heff/ZG)^α\nHeff = max(H, Zb)\n※粗度IV: Zb=10m（他は5m）\n\n■ 風力係数Cf（4ゾーン）\nゾーンR1(一般部): Cf = -1.0〜-2.0（勾配依存）\nゾーンR2(軒先): Cf = -2.5\nゾーンR3(けらば): Cf = -3.2\nゾーンR4(隅角): Cf = -4.0\n\n■ 令3改正のポイント\n・瓦屋根: 全数緊結義務（ガイドライン工法）\n・「粗度区分」は建築物周辺の状況で判断\n\n計算ツールの「屋根葺き材の耐風検討」モジュールで計算できます。'},
@@ -1283,7 +1305,7 @@ async function localQA(query) {
     const merged = [];
     for (const p of (best.pages || [])) if (!merged.includes(p)) merged.push(p);
     for (const p of ftPages) if (!merged.includes(p)) merged.push(p);
-    return {answer: best.answer, pages: merged.slice(0, 12)};
+    return {answer: best.answer, pages: merged.slice(0, 12), docs: best.docs || []};
   }
 
   // qaDBに無いが全文検索でヒット → ページ提示
