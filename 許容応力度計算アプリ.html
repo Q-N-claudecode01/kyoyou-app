@@ -8,6 +8,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="許容応力度">
 <meta name="theme-color" content="#1a365d">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <title>許容応力度設計 計算ツール</title>
 <style>
 :root {
@@ -1771,19 +1774,11 @@ window.addEventListener('DOMContentLoaded', () => {
   // 書籍インデックスを先読みし、ローカル版(book_pages有り)のみページジャンプUIを表示
   loadBookIndex().then(applyBookAvailabilityUI);
   // Service Worker登録 (PWAオフライン対応)
-  if ('serviceWorker' in navigator) {
-    const swCode = `
-const CACHE = 'kyoyou-v1';
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.add('/')));
-  self.skipWaiting();
-});
-self.addEventListener('fetch', e => {
-  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
-});
-`;
-    const blob = new Blob([swCode], {type:'application/javascript'});
-    navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
+  // Service Worker登録 (PWAオフライン対応)
+  // ※ 以前は blob: URL から登録していたため仕様上必ず失敗しオフラインが効いていなかった。
+  //    実ファイル sw.js を同一オリジンから登録する。file:// では登録できないので握りつぶす。
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 });
 </script>
