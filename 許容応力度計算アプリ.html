@@ -319,14 +319,14 @@ canvas { border:1px solid var(--gray-200); border-radius:8px; background:var(--w
       <div class="chat-header">
         <span style="font-size:13px;font-weight:600;color:var(--navy);">許容応力度設計 Q&A</span>
         <span class="status local">ローカルQ&A</span>
-        <span style="font-size:11px;color:var(--gray-600);">書籍・実務ノウハウから回答</span>
+        <span id="bookStatus" style="font-size:11px;color:var(--gray-600);">内蔵FAQから回答</span>
         <span id="bookJumpWrap" style="margin-left:auto;display:none;align-items:center;gap:4px;font-size:11px;color:var(--gray-600);white-space:nowrap;">
           📖 ページ<input id="bookPageJump" type="number" min="1" max="414" placeholder="1-414" style="width:62px;padding:3px 5px;border:1px solid var(--gray-300);border-radius:5px;font-size:12px;flex:none;" onkeydown="if(event.key==='Enter')jumpToBookPage()">
           <button class="btn" style="padding:3px 10px;font-size:11px;background:var(--navy);color:#fff;" onclick="jumpToBookPage()">開く</button>
         </span>
       </div>
       <div class="chat-messages" id="chatMessages">
-        <div class="msg system">許容応力度設計に関する質問をどうぞ。書籍「木造軸組み工法住宅の許容応力度設計①_2025年版」の全414ページから関連箇所を検索します。<br>例：「壁量」「N値」「タルキック」「層間変形角」「スラブ厚」など、自由なキーワードでOK。</div>
+        <div class="msg system" id="chatWelcome">許容応力度設計に関する質問をどうぞ。実務ノウハウ・法令告示の要点をまとめた内蔵FAQから回答します。<br>例：「壁量」「N値」「たわみ」「梁せい」「短期接地圧」「ノボパンの割り方」など、自由なキーワードでOK。</div>
       </div>
       <div class="chat-input-area">
         <textarea id="chatInput" placeholder="質問を入力... (Enter で送信、Shift+Enter で改行)" onkeydown="handleChatKey(event)"></textarea>
@@ -1010,7 +1010,26 @@ function isLocalEnv() {
   return !/github\.io$/i.test(location.hostname);
 }
 
-function addMessage(role, text, pages, query, docs) {
+// 書籍索引の有無を画面表示へ正直に反映する
+// （索引が無い公開版で「全414ページを検索します」と言い続けないため）
+function applyBookAvailabilityUI() {
+  const jw = document.getElementById('bookJumpWrap');
+  if (jw) jw.style.display = bookIndexAvailable ? 'inline-flex' : 'none';
+  const st = document.getElementById('bookStatus');
+  if (st) {
+    st.textContent = bookIndexAvailable
+      ? '内蔵FAQ + 書籍全文検索(ローカル)'
+      : '内蔵FAQから回答';
+  }
+  const wc = document.getElementById('chatWelcome');
+  if (wc && bookIndexAvailable) {
+    wc.innerHTML = '許容応力度設計に関する質問をどうぞ。内蔵FAQに加えて、書籍の全'
+      + BOOK_TOTAL_PAGES + 'ページから関連箇所を全文検索します。<br>'
+      + '例：「壁量」「N値」「たわみ」「梁せい」「短期接地圧」など、自由なキーワードでOK。';
+  }
+}
+
+function addMessage(role, text, pages, query, docs, suggest) {
   const el = document.getElementById('chatMessages');
   const div = document.createElement('div');
   div.className = 'msg ' + role;
@@ -1049,7 +1068,28 @@ function addMessage(role, text, pages, query, docs) {
       </div>`;
     el.appendChild(pgWrap);
   }
+  // 関連しそうな項目：押すとそのまま再検索できるチップ
+  if (role === 'assistant' && suggest && suggest.length > 0) {
+    const sWrap = document.createElement('div');
+    sWrap.className = 'msg assistant';
+    sWrap.style.cssText = 'background:transparent;border:none;padding:0;max-width:90%;align-self:flex-start;';
+    const chips = suggest.map(k => {
+      const safe = String(k).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+      return `<button onclick="askSuggested('${safe.replace(/'/g, "\\'")}')" style="padding:5px 11px;background:#fff;border:1px solid var(--gray-300);border-radius:14px;font-size:12px;color:var(--navy);cursor:pointer;">${safe}</button>`;
+    }).join('');
+    sWrap.innerHTML = `<div style="font-size:11px;color:var(--gray-600);margin-bottom:6px;">🔎 関連しそうな項目 — タップで質問</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">${chips}</div>`;
+    el.appendChild(sWrap);
+  }
   el.scrollTop = el.scrollHeight;
+}
+
+// 候補チップから再検索
+function askSuggested(kw) {
+  const input = document.getElementById('chatInput');
+  if (!input) return;
+  input.value = kw;
+  sendChat();
 }
 
 // PDFページを拡大表示するライトボックス（前後ページ送り対応の簡易PDFビューア）
@@ -1126,7 +1166,7 @@ async function sendChat() {
   addMessage('user', text);
   chatHistory.push({role:'user', content:text});
   const result = await localQA(text);
-  addMessage('assistant', result.answer, result.pages, text, result.docs);
+  addMessage('assistant', result.answer, result.pages, text, result.docs, result.suggest);
   chatHistory.push({role:'assistant', content:result.answer});
 }
 
@@ -1138,17 +1178,48 @@ let bookIndex = null;
 let bookIndexLoadPromise = null;
 let bookIndexAvailable = false;  // 公開版(book_pages無し)では false のまま
 
+// <script src> は file:// でもCORSブロックされない（fetchは不可）。
+// これによりローカルHTTPサーバ無しで書籍索引を読める。
+function injectScript(src, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    const el = document.createElement('script');
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+    el.src = src;
+    el.async = true;
+    el.onload = () => finish(true);
+    el.onerror = () => finish(false);
+    document.head.appendChild(el);
+    setTimeout(() => finish(false), timeoutMs);
+  });
+}
+
 async function loadBookIndex() {
   if (bookIndex !== null) return bookIndex;
   if (bookIndexLoadPromise) return bookIndexLoadPromise;
   bookIndexLoadPromise = (async () => {
+    // ① 既に読み込み済み（HTMLに直接 <script> を置いた場合など）
+    if (window.BOOK_INDEX && Object.keys(window.BOOK_INDEX).length > 0) {
+      bookIndex = window.BOOK_INDEX;
+      bookIndexAvailable = true;
+      return bookIndex;
+    }
+    // ② script注入（file:// でも通る＝ローカル運用の本命）
+    const ok = await injectScript('book_pages/book_index.js');
+    if (ok && window.BOOK_INDEX && Object.keys(window.BOOK_INDEX).length > 0) {
+      bookIndex = window.BOOK_INDEX;
+      bookIndexAvailable = true;
+      return bookIndex;
+    }
+    // ③ fetch（http配信していて book_index.js が未生成の場合の保険）
     try {
       const res = await fetch('book_pages/ocr_text.json');
       if (!res.ok) throw new Error('not found');
       bookIndex = await res.json();
       bookIndexAvailable = Object.keys(bookIndex).length > 0;
     } catch(e) {
-      console.warn('book_index not loaded (公開版は内蔵FAQのみ):', e);
+      // 公開版(GitHub Pages)は書籍データを持たない＝正常系。内蔵FAQのみで動く
+      console.info('書籍索引なし → 内蔵FAQのみで回答します');
       bookIndex = {};
       bookIndexAvailable = false;
     }
@@ -1162,6 +1233,16 @@ function escRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 // クエリから検索トークンを生成（日本語助詞・複合語対応）
 const STOP_PARTICLES = ['とは','について','の方法','の計算','の算定','の検討','とは何か','どうやって','どのように','について教えて','を教えて','について知りたい','とは何','の意味','の定義','とはなにか','なにか','なに'];
 const PARTICLES_SPLIT = /[のがをにはへとでもや、？！。\s（）()「」【】\[\]]+/g;
+
+// 表記ゆれ吸収：全角英数→半角、英字小文字化、記号・空白除去
+function normalizeText(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[‐‑‒–—―ー－]/g, 'ー')
+    .toLowerCase()
+    .replace(/[\s・,，.．\-_\/／()（）「」【】\[\]]/g, '');
+}
 
 function tokenizeQuery(q) {
   const tokens = new Set();
@@ -1273,39 +1354,70 @@ const qaDB = [
   {keywords:['鉄骨階段','屋外階段','ササラ','工法分類'], pages:[], answer:'【鉄骨階段の工法分類（実物件3パターン）】\n\n■ A型①: 完全吊下げ型\n木造躯体にラグスクリューのみで取付。下端も木造梁/土台。\n→ シート4-A（4-5不要）\n\n■ A型②: スラブ着地型\n上部は木造取付＋下端が基礎スラブにBPL+後施工アンカー着地。\n→ シート4-A＋4-5スラブ接合検討（PL-17/M12 HC-12）\n\n■ B型: 自立4本柱型\n鉄骨柱4本＋独立基礎で自立。ベースプレート曲げ検定が必須。\n→ シート4-B（4-6 BPL曲げ）＋5-B独立基礎\n\n判別: 矩計図で階段下端の支持方法を必ず確認！\nササラ桁標準: PL-9×250 SS400（単純梁）'},
   {keywords:['平面不整形','不整形','突出部','くびれ','ゾーニング','L字','コの字','ロの字'], pages:[17,26,281,282,288], answer:'【平面不整形の検討】(書籍 第3章3.1)\n\n突出部・くびれ・小開口付き耐力壁などを持ち、整形でない平面形状の建築物。\nL字型・コの字型・ロの字型などは地震時にねじれ・損傷が生じやすい。\n\n■ 検討手順（ゾーニング検討）\n① まず建物全体を一体とみなして構造計算＋仕様規定適合を確認\n② 平面を複数のゾーンに分割し、各ゾーン単独で要求性能を満たすか検討\n③ 各階・各方向について、各ゾーンの地震力に対する検定比が同程度になるようにする\n\n■ 関連\n・四分割法／偏心率 Re ≤ 0.3 を満たすこと（壁配置のつり合い）\n・突出部・吹抜けで水平構面の検定が成立しない部分は、一点鎖線で区切り\n  各ゾーンを1つとみなして検討（p288）\n\n書籍参照: 第3章 3.1（突出部・くびれ）、第2章 2.3（偏心率）'},
   {keywords:['立面不整形','スキップフロア','スキップ','下屋','吹抜け','吹き抜け','段差床'], pages:[286,288,132], answer:'【立面不整形（スキップフロア・下屋・吹抜け）】(書籍 第3章3.2)\n\n高さ方向に整形でない建築物。鉛直構面・水平構面の連続性に注意。\n\n■ スキップフロア\n床レベルの違いが横架材せいの範囲内なら、同一レベルの床として計算してよい。\n左右の横架材せいが重ならない（段差が大きい）場合は、別途の検討が必要。\n\n■ 下屋・大屋根・全吹抜け\n吹抜けで水平構面の負担がゼロとなる建物は、平面不整形の突出部と同様に\n吹抜け中心線で建物をゾーン分割して検討する（p288）。\n床梁と同レベルに横架材を入れ、横架材より下を下階の耐力壁等とする。\n\n書籍参照: 第3章 3.2（スキップフロア・下屋・吹抜け）'},
+  {keywords:['ノボパン','構造用パーティクルボード','パーティクルボード','面材割り付け','2枚割り'], aliases:['novopan','stp','面材','継手間柱','間柱','割り付け','3尺','端部の釘'], pages:[], answer:'【構造用パーティクルボード(ノボパン)の面材割り付け】\n\n■規格寸法\n厚9.0mm / 幅908・998mm / 長さ2440・2730・3030mm\n→ 3尺(910)を超える間口は1枚で張れないため継ぎが必要。\n\n■継手部の要件(QN標準仕様書 各伏図 耐力壁凡例)\n「柱間距離910以上の耐力壁には45×90以上の継手間柱を設けること」\n通常の間柱(30×105等)では幅不足。継手部だけ45×90以上にする。\n\n■釘の打ち方\n・継手間柱には両側の面材端部を「外周部ピッチ」で打つ\n・面材相互の目地は3mm内外\n・釘は面材端部から6mm以上内側(標準仕様書S-01/S-02 詳細図)\n\n■割り方の推奨\n『全体幅を2等分』を推奨。3尺+端数でも継手間柱を入れれば成立するが、端数が小さいと外周@75の釘を縁端6mm確保して打てず、パーティクルボードは端部の割裂が生じやすい。'},
+  {keywords:['真壁受材仕様','床勝ち','受材','真壁'], aliases:['ゆかがち','うけざい','まかべ'], pages:[], answer:'【真壁受材仕様・床勝ち納まり】(告示1100号)\n\n■真壁受材仕様の壁倍率(構造用パーティクルボードt9・N50)\n・4.0倍: 外周@75 / 中通@150\n・2.5倍: 外周@150 / 中通@150\n\n■受材の仕様\n・受材 30×40以上\n・受材釘 N75@120以下(4.0倍) / N75@300以下(2.5倍)\n\n■大壁床勝ち受材仕様\n・受材 30×60以上(4.3倍) / 30×40以上(2.5倍)\n・受材釘 N75@120以下(4.3倍) / N75@200以下(2.5倍)\n\n■間柱間隔\n真壁受材仕様: 1000以下(全体2000以下)\n大壁: 500以下×2(全体1000以下)\n\n床勝ちは床合板を先に張り、壁面材の下端を受材で受ける納まり。下端受材があるため真壁受材仕様と整合する。'},
+  {keywords:['大壁','入隅','大壁入隅','壁倍率'], aliases:['おおかべ','いりすみ','かべばいりつ'], pages:[], answer:'【大壁の壁倍率と入隅の扱い】\n\n■構造用パーティクルボードt9・N50(告示1100号)\n・大壁 4.3倍: 外周@75 / 中通@150\n・大壁 2.5倍: 外周@150 / 中通@150\n\n■入隅部の注意(QN標準仕様書 ※1)\n「大壁入隅部は真壁の壁倍率(4.0又は2.5)を採用する」\n入隅は面材が角を回り込めないため、大壁として張っても真壁相当の倍率で評価する。\n\n■面材の留めつけ\n・継手部の間柱は幅45mm以上\n・胴つなぎも幅45mm以上\n・目地3mm内外、釘は面材端から6mm以上内側'},
+  {keywords:['柱頭柱脚','N値','β','出隅','必要引張'], aliases:['ホールダウン','hd','引き寄せ金物','hd15','hd20','hd25','金物選定','柱脚金物','n値計算'], pages:[], answer:'【柱頭柱脚金物の必要引張力とβ】\n\n■計算式(計算書の柱頭柱脚表)\nN = Vs×β + VL − Vα − Vτ\n行は Vs / VL / Vα / Vτ …柱頭β…柱脚β の順に並ぶ。\n\n■β(周辺部材による低減係数)\n・0.5: その他(一般部)\n・0.8: 出隅\n\n■出隅の判定方法\n金物表にその通り端の柱が存在しないかを見る。\n例) い通りに「い1」が無い → 「い2」は出隅 → β=0.8\n\n■βを0.5→0.8に直せと指摘された場合\n再計算してNGになるなら金物を1ランク上げるのが定石。\n実例: N=21.38×0.8+8.43−7.98=17.55kN > HD15 → HD20へ変更(検定0.88)で回答。'},
+  {keywords:['めり込み','ほぞ','欠損','支圧'], aliases:['圧縮','土台めり込み','有効断面'], pages:[], answer:'【柱のめり込み検討と ほぞ欠損】\n\n計算書のめり込み表は 柱行 = B×D, A, Ae … の構成。\n\n■ほぞ欠損 = A − Ae\n実測値の例:\n・9.0 cm² = 30×30\n・25.5 cm² = 30×85\n・25.8 cm² = 30×86\n・17.25 cm² = 端部柱 30×57.5\n・17.4 cm² = 30×58\n\n端部柱はほぞ幅が半分になるため欠損が小さい。\nめり込みNGの場合は 土台樹種の変更(ヒノキ等) / 柱位置の見直し / めり込み防止金物 で対応する。'},
+  {keywords:['短期接地圧','転倒','塔状比'], aliases:['接地圧','転倒モーメント','べた基礎接地圧','偏心'], pages:[], answer:'【転倒モーメントによる短期接地圧】(計算書8.3)\n\n塔状比(Hmax/Lx)が2.5を超えると検討が必要になる。\n\n■算定\n偏心 e > 核半径 r = Lx/6 → 三角形分布\nsσe = αe × ΣW/AB\n圧縮幅 Lc = 3(Lx/2 − e)\n検定 sσe / 2qa (2qa = 長期の2倍)\n\n■最重要の注意\n8.3のsσeは「剛体接地圧」で地盤検定専用。スラブ・基礎梁の設計用接地圧(変位法では20kN/m²程度)とは別物で、部材検定に機械代入してはいけない。\n安全側の補足検定として使うのは可だが「安全側の仮定」と明記する。\n\n■「短期接地圧を考慮した基礎梁・スラブの検討」を求められた場合\n計算書を作り直さず、A4一枚の別紙で回答するのが定石。\n・地盤: 8.3の検定値を引用\n・スラブ: 三角形分布での安全側補足検定\n・基礎梁: 既存の変位法出力(7.3 長期/短期加力)を引用'},
+  {keywords:['基礎梁','変位法','地中梁'], aliases:['きそばり','マット','基礎梁検定'], pages:[], answer:'【べた基礎の基礎梁の検討】\n\n■やってはいけないモデル化\n「スラブ端部反力 × スパンの単純梁」で手計算するのは過大評価かつ不適切。\nべた基礎の梁はスラブと一体のマットで、梁直下も地盤が支えているため。\n\n■正しい対応\n計算書7.3の変位法出力(地盤ばね)を引用する。\n7.3は (1)長期 → (2)短期(加力4方向) の構成。\n\n■検定値を読むときの注意\n・せん断係数α(1〜2)を検定比と誤認しない。検定比は M/Ma・Q/Qa の列\n・1つの通りだけ見て「余裕がある」と結論しない。全通り・全スパンを走査して真の最大値を取る\n(実例: い通り0.03〜0.06でも、わ通りは0.58だった)'},
+  {keywords:['人通口','床下','点検口','破線'], aliases:['にんつうこう','床下点検口','fg4','基礎伏図'], pages:[], answer:'【基礎伏図の人通口と床下ルート】\n\n■図面の読み方\n・基礎伏図の太い破線 = 基礎立ち上がりなし = 人が通れる\n・実線の基礎梁だけが床下の仕切りになる\n・FG4 は人通口補強の符号\n破線を障壁と誤読すると「床下が分断されている」と誤指摘するので注意。\n\n■確認すべきこと\n床下点検口から全区画へ到達できるか(未到達エリアがないか)。有効幅は600mm以上が目安。\n\n■対象外\n土間部(FS3等、レベル-250など)は床下空間が無いのでルート対象外。\n床下点検口の位置は基礎伏図と1階平面図の両方に記載される。'},
+  {keywords:['基礎スラブ配筋','FS','スラブ配筋','仕様No'], aliases:['基礎タイプ','fs1','fs3','配筋照合'], pages:[], answer:'【基礎スラブ配筋の照合(FS番号は2体系)】\n\n■最重要\n図面のFS番号 = 配筋仕様番号\n計算書「7.x スラブの設計」表のFS番号 = 区画の位置記号\nこの2つは別体系。位置記号だけ見て突合すると誤検出する。\n\n■正しい突合先\n計算書の「基礎タイプ」表の上端主筋種類の行。ここが図面断面図のFS番号と1対1で対応する。\nスラブ設計表の「仕様No」列が図面のFS番号にあたる。例) No1=@200 / No2=@150 / No3=@100\n\n■配置数も見る\n図面基礎伏図に置かれたFS記号の数 ⇔ 計算の該当仕様Noの区画数。特記なきは最小仕様(FS1)。'},
+  {keywords:['地盤改良','偏芯','改良体','RES-P'], aliases:['改良','柱状改良','地盤補強','fe','跳ね出し'], pages:[], answer:'【地盤改良まわりの実務】\n\n■改良体の偏芯を指摘された場合\nべた基礎であれば基礎全体で荷重を分散するため、改良体が多少偏芯しても片持ち(跳ね出し)基礎の検討を要する状態にはならないことが多い。\n接地圧σe < 改良後fe を示し、偏芯量が改良体半径以内であることを添えれば計算書の再作成なしで回答できる。\n(実例: 外周部内側125mm偏芯・改良体半径200 → 補強不要で回答)\n\n■RES-P等の小口径鋼管\n改良体頭部が基礎底盤の直下にあることを前提に複合地盤として支持力を評価している。砕石等で嵩上げした分だけ頭部が基礎から離れると設計と整合しなくなる。\n\n■着工前の提出物\n地盤調査報告書・地盤改良工事検討書を確認検査機関へ提出する(QN標準仕様書 基礎伏図注記)。'},
+  {keywords:['砕石','RC砕石','埋戻し','嵩上げ','根入れ'], aliases:['クラッシャーラン','転圧','締固め','置換','不同沈下'], pages:[], answer:'【砕石での埋戻し・嵩上げ】\n\n構造耐力上は良質材による置換なので支障ないが、以下3点が条件。\n\n■1. 層状転圧\n1層300mm以下で敷き均し、各層ごとに転圧する。厚く一度に敷いて表面だけ転圧すると締固め不足となり不同沈下の原因になる。\n\n■2. 改良体頭部と基礎の関係\n地盤改良がある場合、改良体頭部が基礎底盤直下にあることが前提。砕石敷設後のレベルを基準に施工するか、改良会社に嵩上げ後の設計成立を確認する。\n\n■3. 根入れの確保\n嵩上げ後の設計GLを基準に根入れ深さ・底版深さが確保されていること。\n(QN標準の例: 基礎スラブ天端=設計GL+50mm、底版深さ100mm、根入れ300mm)\n\n■注意\n長期許容地耐力は下部の原地盤と地盤改良で決まる。砕石層は荷重を分散する役割で、敷設自体で地耐力が上がるわけではない。'},
+  {keywords:['積載荷重','令85条','共用階段','積載'], aliases:['せきさい','ll','積載荷重表','床用','地震用'], pages:[], answer:'【積載荷重(令85条)】\n\n用途ごとに「床用 / 架構(大梁・柱・基礎)用 / 地震用」の3種類を使い分ける。(N/m²)\n\n■住宅の居室\n1800 / 1300 / 600\n\n■共同住宅の共用廊下・階段\n3500 / 3200 / 2100\n\n■事務所(事務室)\n2900 / 1800 / 800\n\n■よくある誤り\n共同住宅の共用階段に住宅用の1800系を使ってしまう。共用部は3500系。危険側になるので注意。\n\n床用 > 架構用 > 地震用 の順に小さくなるのは、負担面積が大きいほど同時に満載される確率が下がるため。'},
+  {keywords:['耐風梁','見付'], aliases:['たいふうばり','吹抜け','吹き抜け'], pages:[], answer:'【耐風梁の検討】\n\n吹抜け等で耐力壁が上下に連続しない箇所は、風圧力を受ける横架材(耐風梁)の検討が必要になる。\n\n■まず全文検索する\n計算書の6章に「(4)短期耐風梁の検討」が既に出力されている場合がある。\n検査機関から「耐風梁の検討はあるか」と問われたら、まず計算書を「耐風」で全文検索する。あれば引用のみで回答が完結する。\n\n■無い場合\n見付面積×速度圧×風力係数で梁の曲げ・たわみを検討し、別紙で追加する。'},
+  {keywords:['質疑','指摘','検査機関','回答'], aliases:['質疑回答','指摘事項','回答書','審査','確認申請'], pages:[], answer:'【確認検査機関の質疑への対応方針】\n\n■基本は「計算書を作り直さない」\n優先順位:\n1. 計算書に既にある出力を引用して回答\n2. 無ければ安全側の補足手計算を別紙化(検定比<1.0を厳格確認)\n3. 手計算でNG/グレーなら捏造せず、局所補強案か再計算を提案\n\n■別紙の体裁(検査機関目線)\n・A4一枚に収める。方針説明・参考注記は削る\n・冒頭に物件名・受付番号・指摘事項の引用\n・検定総括表(部材/検定比/判定)を先頭に置く\n・出典頁を必ず明記(「計算書p.390 8.3」等)。検査機関は原本と突合する\n\n■保存先\n物件フォルダの ⑤確認申請指摘、回答 ＼ 02回答 ＼\n過去の質疑PDFは同フォルダにあるので前例として使える。'},
+  {keywords:['偏心率','壁量','四分割','検定値'], aliases:['re','ねじれ','四分割法','壁量計算'], pages:[], answer:'【偏心率・壁量検定の質疑】\n\n■偏心率\n計算書の「(5)偏心率の算定」表を見る。許容応力度計算では Re ≤ 0.3。\n\n■壁量検定値は通りごとに変えられない\n壁量の検定値は剛性比例分配で決まるため、同方向・同階の全通りで同値になる。\n「この通りだけ検定値を良くしてほしい」という要望は原理的に不可能。この説明にそのまま使える。\n\n■偏心率が0.3を超える場合\n壁配置の見直し(バランス改善)が必要。特定の通りに壁を足すだけでは解決しないこともある。'},
+  {keywords:['配筋ピッチ','ピッチ不整合','図面と計算'], aliases:['@150','@200','鉄筋ピッチ'], pages:[], answer:'【図面と計算書で配筋ピッチが違う場合】\n\n例) 計算@150 ⇔ 図面@200\n\n■原則\n図面を計算に合わせる(図面訂正)のが第一。\n\n■参考値の示し方\nどうしても@200で通したい場合、検定値を 4/3倍 して1.0未満なら耐力上は成立することを併記できる。ただし正式には計算書と図面の整合を取る。\n\n■同種の指摘\n図面の配筋が計算より少ない(図<計算)場合は危険側なので必ず是正する。逆(図>計算)は安全側だが不整合として指摘されることがある。'},
+  {keywords:['整合','整合確認','相違','構造図と計算書'], aliases:['チェック','照合','突合','せいごう'], pages:[], answer:'【構造図×計算書の整合チェック】\n\nQNではスキル kozo-seigo-check で自動照合する(構造図PDFと計算書PDFの両方を渡す)。\n\n■自動チェック項目\n版ずれ / 設計条件(V0・粗度・積雪・Fc・鉄筋・地耐力・垂木ピッチ) / 使用材料 / FG基礎梁(符号・主筋本数・b1寸法) / 梁成 / 金物(登録一覧⊆図の配置) / 耐力壁 / アンカー×柱脚 / 図面体裁\n\n■既知のテンプレ差(多くは無害だが必ず明示)\n・大引き: 図105×105 / 計算90 → 計算が小=安全側\n・樹種: 図 杉KD / 計算 針葉樹無等級 → 軽微\n・あばら筋: 図 D10@200 / 計算 未算入 → 安全側\n・地耐力の不一致 → 図の朱書き注記に実施地耐力が書かれている場合あり\n\n■原則\n曖昧な項目は断定しない。ただし「目視確認」に逃がして、見ずに報告を終えないこと。'},
+  {keywords:['使用材料','樹種','強度等級','材料照合'], aliases:['e105','f300','無等級','jas','材料','筋かい'], pages:[], answer:'【使用材料の突合(必ず実施)】\n\n図面凡例と計算書の樹種・強度等級は必ず突合する。過去に見逃しで指摘を受けた項目。\n\n■見るべき相違\n・E値が同じでF値が違う(例 図 E105-F345 / 計算 E105-F300)\n・計算書にしかない等級(WWEW E95-F315 等)\n・樹種グループの相違\n計算F > 図F は危険側なので最優先。\n\n■軽微扱いでよいもの\n無等級材の樹種表記差(桧⇔ひば・ひのき、スプルース⇔もみ・えぞまつ)は告示1452号の同グループなら強度同等。ただし報告には出す。\n\n■筋かいの樹種\n図面凡例に記載不要(断面45×90以上と壁倍率で規定される)。指摘しない。\n\n■注意\n図面PDFは作業中に差し替わることがある。指摘前に内容が最新か確認する。'},
+  {keywords:['軽微変更','変更リスト','設計者記名','施行規則'], aliases:['3条の2','九号','記名','変更'], pages:[], answer:'【軽微変更と設計者の記名】\n\n■軽微変更リストの記載4点\n項目 / 施行規則第3条の2の該当号 / 軽微変更と判断した設計者の所見 / 設計者の建築士種別・氏名\n\n■該当号の判断\n構造耐力上主要な部分(地中梁など)の断面・符号変更で、材料不変かつ耐力が減少しない場合は施行規則第3条の2第1項第九号。\n(位置変更は八号だが、横架材は小ばり限定なので地中梁の断面変更は九号)\n\n■標準記名ブロック\n株式会社QuantumNet 二級建築士事務所　埼玉県知事登録(2)第11549号\n一級建築士　大臣登録　第371282号　青柳　剛'},
+  {keywords:['設計方針','余裕','荷重の見込み','コスト'], aliases:['0.95','検定比','スタンス','方針'], pages:[], answer:'【QNの設計スタンス(荷重の余裕について)】\n\n■固定荷重に余裕は見ていない\n各部材の実際の荷重をそのまま積み上げている。\n\n■荷重を大きめに見込むのは両刃\n耐力壁は安全側になるが、金物や基礎の隅起こし(浮き上がり)検討では押さえ込み力が大きくなり、かえって不利になる。\nそのため「将来の変更を見越して荷重を多めに」という方針は原則採らない。\n\n■現場での仕様変更に備えたい場合\n鉛直構面(耐力壁)・基礎梁の検討で検定値を0.95以下でOKと判断する運用は可能。\nただし耐力壁の増加・基礎梁/主筋のサイズアップ → コスト増につながる。\n\n■構造図の範囲\n構造図は施工図ではない。構造計算に不要で検査機関の指摘もない情報(UB梁位置等)は原則記載せず、プレカット図で指示してもらう運用。'},
+  {keywords:['たわみ','使用上の支障','変形増大係数','クリープ'], aliases:['変形','たわみ制限','1/250','82条','使用上'], pages:[], answer:'【たわみ(使用上の支障)の検討】\n\n令第82条第四号により、使用上の支障が起こらないことを確かめる。\n\n■木造の要点\n木材はクリープ(長期の変形進行)があるため、変形増大係数 2.0 を掛けた長期たわみで評価するのが一般的。\n\n■判定の目安\n・梁: δ/L ≤ 1/250(変形増大係数考慮後)。あわせて絶対値20mm程度以内\n・片持ち梁: 見かけのスパンを2倍として扱う\n・鉄骨部材: L/250(短期) / L/300(長期)を目安\n\n■多くの横架材はたわみで断面が決まる\n曲げ・せん断がOKでもたわみでNGになることが多い。\n\n■NG時の対処\n梁せいUP / スパン短縮(柱・小梁の追加) / ヤング係数の高い材へ変更(無等級→集成材E105-F300等) / 負担幅の見直し。'},
+  {keywords:['梁せい','横架材','梁断面','スパン'], aliases:['はりせい','梁の断面','横架材断面','梁の検討','断面算定'], pages:[], answer:'【梁せい(横架材断面)の決め方】\n\n梁せいは 曲げ・せん断・たわみ の3つで決まる。木造の横架材は大半が「たわみ」で決まるため、まずたわみで当たりを付ける。\n\n■決定の流れ\n1. 負担幅 × スパンから荷重を出す\n2. 概略断面を仮定\n3. 曲げ σb/fb・せん断 τ/fs・たわみ δ を検定\n4. 検定比が1.0を超えたら断面を上げて再検定\n\n■材種の影響\n同じ断面でもヤング係数E が違えばたわみが変わる。\n無等級材(すぎE70/べいまつE100) → 集成材(E105-F300等)にするとたわみが大きく改善する。\n\n■QNの運用\n現場での仕様変更に備えたい場合、検定値0.95以下でOKと判断する運用も可能。ただし部材サイズアップ=コスト増になるためコストとの兼ね合いで決める。\n\n■NG時の対処\n梁せいUP / 小梁・柱を入れてスパン短縮 / 集成材化 / 負担幅の再配分。'},
+  {keywords:['層間変形角','ルート','設計ルート'], aliases:['1/120','82条の2','変形角','適合性判定','適判'], pages:[], answer:'【層間変形角と設計ルート】\n\n■層間変形角(令第82条の2)\n地震力時の各階の変形角を 1/120 以下に収める。内外装材に著しい損傷が生じないことを確かめる規定。\n\n■木造3階建ての一般的なルート\nルート1(許容応力度計算) + 層間変形角の検討。\n木造3階建てはルート1であれば構造計算適合性判定の対象外。\n\n■計算書での確認位置\n結果チェックリストの「層間変形角の算定」欄。方向・階ごとにOK/NG が出る。\n\n■NG時の対処\n耐力壁の増設・壁倍率のアップ・偏心の是正(壁配置バランス)。'},
 ];
 
 async function localQA(query) {
   // 書籍インデックスをロード（初回のみ）
   await loadBookIndex();
 
-  const q = query.toLowerCase();
-  let best = null, bestScore = 0;
+  const qn = normalizeText(query);
+  const tokens = tokenizeQuery(query).map(normalizeText).filter(t => t.length >= 2);
+
+  // 各FAQを採点（完全包含＋逆方向部分一致。文字単位の加点は誤爆源のため廃止）
+  const ranked = [];
   for (const item of qaDB) {
+    const terms = [...item.keywords, ...(item.aliases || [])];
     let score = 0;
-    for (const kw of item.keywords) {
-      // より具体的（長い）キーワードの完全一致を優先（例:「立面不整形」>「不整形」）
-      if (q.includes(kw.toLowerCase())) score += 2 + kw.length * 0.5;
-      // Partial match
-      for (const char of kw) {
-        if (q.includes(char)) score += 0.1;
+    for (const kw of terms) {
+      const kwn = normalizeText(kw);
+      if (!kwn) continue;
+      // 質問文がキーワードを含む（長い＝具体的なキーワードほど高得点）
+      if (qn.includes(kwn)) { score += 3 + kwn.length * 0.6; continue; }
+      // 逆方向：キーワードが質問トークンを含む（「N値」→「N値計算」に当てる）
+      for (const tk of tokens) {
+        if (tk.length >= 2 && kwn.includes(tk)) score += 1.2 + tk.length * 0.3;
       }
     }
-    if (score > bestScore) {
-      bestScore = score;
-      best = item;
-    }
+    if (score > 0) ranked.push({item, score});
   }
+  ranked.sort((a, b) => b.score - a.score);
+  const best = ranked.length ? ranked[0].item : null;
+  const bestScore = ranked.length ? ranked[0].score : 0;
+  // 2位以下を「関連しそうな項目」として提示（ゼロ回答・的外れ回答の救済）
+  const suggest = ranked.slice(1, 4).filter(r => r.score >= 1.5).map(r => r.item.keywords[0]);
 
   // 全文検索（OCRインデックス）でヒットしたページ
   const ftPages = searchBookIndex(query, 10);
 
   // qaDBにマッチした場合：解説 + 関連ページ（curated + 全文検索結果を統合）
-  if (best && bestScore >= 1) {
+  if (best && bestScore >= 2.5) {
     const merged = [];
     for (const p of (best.pages || [])) if (!merged.includes(p)) merged.push(p);
     for (const p of ftPages) if (!merged.includes(p)) merged.push(p);
-    return {answer: best.answer, pages: merged.slice(0, 12), docs: best.docs || []};
+    return {answer: best.answer, pages: merged.slice(0, 12), docs: best.docs || [], suggest};
   }
 
   // qaDBに無いが全文検索でヒット → ページ提示
@@ -1323,7 +1435,12 @@ async function localQA(query) {
   const noHitNote = bookIndexAvailable
     ? 'ご質問に該当する情報が書籍内で見つかりませんでした。'
     : 'ご質問に該当するFAQが見つかりませんでした。\n※書籍全文検索・ページ画像はローカル版専用です（公開版は内蔵FAQのみで回答します）。';
-  return {answer: noHitNote + '\n\nキーワード例:\n・壁量計算 ・風圧力 ・地震力 ・偏心率\n・アンカーボルト ・柱頭柱脚金物 ・水平構面\n・基礎自重 ・接地圧 ・スラブ ・釘配列\n・告示仕様 ・大臣認定 ・タルキック\n・計算方針 ・安全証明書 ・屋根ふき材\n・鉄骨階段 ・手摺 ・令23条 ・HDZ55\n・ストラデザイン ・狭小耐力壁\n\n別の言い回し・短いキーワードでもお試しください。', pages:[]};
+  return {
+    answer: noHitNote + '\n\n下の候補をタップするか、別の言い回し・短いキーワードでお試しください。',
+    pages: [],
+    suggest: ['壁量計算','たわみ','梁せい','偏心率','柱頭柱脚','積載荷重','短期接地圧','基礎梁',
+              'ノボパン','床勝ち','人通口','地盤改良','耐風梁','層間変形角','鉄骨階段','検査機関の質疑']
+  };
 }
 
 // ============================================================
@@ -1652,10 +1769,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('calc-input-area').style.display = 'none';
   document.getElementById('calcResultWrap').style.display = 'none';
   // 書籍インデックスを先読みし、ローカル版(book_pages有り)のみページジャンプUIを表示
-  loadBookIndex().then(() => {
-    const jw = document.getElementById('bookJumpWrap');
-    if (jw && bookIndexAvailable) jw.style.display = 'inline-flex';
-  });
+  loadBookIndex().then(applyBookAvailabilityUI);
   // Service Worker登録 (PWAオフライン対応)
   if ('serviceWorker' in navigator) {
     const swCode = `
