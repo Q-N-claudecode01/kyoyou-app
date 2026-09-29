@@ -245,6 +245,8 @@ canvas { border:1px solid var(--gray-200); border-radius:8px; background:var(--w
   .chat-input-area { padding:10px 12px calc(10px + env(safe-area-inset-bottom)); }
   .chat-input-area textarea { height:48px; }
   .back-to-top { bottom:calc(96px + env(safe-area-inset-bottom)); }
+  .chat-header { flex-wrap:wrap; padding:10px 12px; gap:8px; }
+  #bookImportBtn, #bookRemoveBtn { min-height:36px; font-size:12px !important; }
 }
 </style>
 </head>
@@ -349,6 +351,9 @@ canvas { border:1px solid var(--gray-200); border-radius:8px; background:var(--w
         <span style="font-size:13px;font-weight:600;color:var(--navy);">許容応力度設計 Q&A</span>
         <span class="status local">ローカルQ&A</span>
         <span id="bookStatus" style="font-size:11px;color:var(--gray-600);">内蔵FAQから回答</span>
+        <button id="bookImportBtn" class="btn" style="display:none;padding:4px 10px;font-size:11px;background:var(--navy);color:#fff;" onclick="document.getElementById('bookPackInput').click()">📥 書籍データを取り込む</button>
+        <button id="bookRemoveBtn" class="btn" style="display:none;padding:4px 10px;font-size:11px;background:var(--gray-200);color:var(--gray-700);" onclick="removeBookPack()">書籍データ削除</button>
+        <input type="file" id="bookPackInput" style="display:none" onchange="if(this.files[0])importBookPack(this.files[0]);this.value='';">
         <span id="bookJumpWrap" style="margin-left:auto;display:none;align-items:center;gap:4px;font-size:11px;color:var(--gray-600);white-space:nowrap;">
           📖 ページ<input id="bookPageJump" type="number" min="1" max="414" placeholder="1-414" style="width:62px;padding:3px 5px;border:1px solid var(--gray-300);border-radius:5px;font-size:12px;flex:none;" onkeydown="if(event.key==='Enter')jumpToBookPage()">
           <button class="btn" style="padding:3px 10px;font-size:11px;background:var(--navy);color:#fff;" onclick="jumpToBookPage()">開く</button>
@@ -1051,16 +1056,23 @@ function isLocalEnv() {
 
 // 書籍索引の有無を画面表示へ正直に反映する
 // （索引が無い公開版で「全414ページを検索します」と言い続けないため）
+let chatWelcomeDefault = null;
 function applyBookAvailabilityUI() {
   const jw = document.getElementById('bookJumpWrap');
   if (jw) jw.style.display = bookIndexAvailable ? 'inline-flex' : 'none';
   const st = document.getElementById('bookStatus');
   if (st) {
-    st.textContent = bookIndexAvailable
-      ? '内蔵FAQ + 書籍全文検索(ローカル)'
-      : '内蔵FAQから回答';
+    st.textContent = !bookIndexAvailable ? '内蔵FAQから回答'
+      : bookSource === 'device' ? '内蔵FAQ + 書籍全文検索(端末内)'
+      : '内蔵FAQ + 書籍全文検索(ローカル)';
   }
+  const ib = document.getElementById('bookImportBtn');
+  if (ib) ib.style.display = bookIndexAvailable ? 'none' : 'inline-block';
+  const rb = document.getElementById('bookRemoveBtn');
+  if (rb) rb.style.display = (bookIndexAvailable && bookSource === 'device') ? 'inline-block' : 'none';
   const wc = document.getElementById('chatWelcome');
+  if (wc && chatWelcomeDefault === null) chatWelcomeDefault = wc.innerHTML;
+  if (wc && !bookIndexAvailable) wc.innerHTML = chatWelcomeDefault;
   if (wc && bookIndexAvailable) {
     wc.innerHTML = '許容応力度設計に関する質問をどうぞ。内蔵FAQに加えて、書籍の全'
       + BOOK_TOTAL_PAGES + 'ページから関連箇所を全文検索します。<br>'
@@ -1095,7 +1107,7 @@ function addMessage(role, text, pages, query, docs, suggest) {
       <div style="font-size:11px;color:var(--gray-600);margin-bottom:6px;">📖 書籍「許容応力度設計①(2025)」該当ページ (${pages.length}枚) — タップで拡大、◀▶でページ送り</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${pages.map(p => {
-          const fname = 'book_pages/p' + String(p).padStart(3,'0') + '.png';
+          const fname = bookPageSrc(p);
           const snip = query ? getSnippet(p, query, 36) : '';
           const snipHtml = snip ? `<div style="font-size:10px;color:var(--gray-600);padding:3px 5px;line-height:1.3;border-top:1px solid var(--gray-200);">${snip.replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div>` : '';
           return `<div style="cursor:pointer;border:1px solid var(--gray-300);border-radius:6px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1);width:140px;" onclick="openBookPage(${p})">
@@ -1153,7 +1165,7 @@ function renderBookLightbox() {
   const lb = document.getElementById('bookLightbox');
   if (!lb) return;
   const p = currentBookPage;
-  const fname = 'book_pages/p' + String(p).padStart(3,'0') + '.png';
+  const fname = bookPageSrc(p);
   const atStart = p <= 1, atEnd = p >= BOOK_TOTAL_PAGES;
   lb.innerHTML = `
     <button onclick="event.stopPropagation();stepBookPage(-1)" ${atStart?'disabled':''} title="前のページ (←)"
@@ -1233,14 +1245,120 @@ function injectScript(src, timeoutMs = 15000) {
   });
 }
 
+// ============================================================
+// 書籍データの端末内保存(スマホ用)
+// 書籍の本文・画像は著作権上、公開サイトに置けない。取り込んだ .qnbook は
+// この端末の IndexedDB にだけ保存し、外部へは一切送信しない。
+// 取込ファイルはPC側の make_book_pack.py で作る「書籍データ_スマホ取込用.qnbook」
+//   [0:8]=QNBOOK01 / [8:12]=ヘッダ長(LE) / ヘッダJSON{pages,text} / 以降JPEG連結
+// ============================================================
+let bookSource = null;   // 'device'=端末内に取り込んだデータ / 'local'=PCのbook_pages
+let bookPack = null;     // {blob, base, pages, text}
+const bookPageUrlCache = {};
+
+function bookDB() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) return reject(new Error('この端末ではデータを保存できません'));
+    const req = indexedDB.open('kyoyou-book', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('pack');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function bookDBRun(mode, fn) {
+  const db = await bookDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('pack', mode);
+    const req = fn(tx.objectStore('pack'));
+    tx.oncomplete = () => resolve(req && req.result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('保存が中断されました(空き容量不足の可能性)'));
+  });
+}
+const bookDBGet = () => bookDBRun('readonly', st => st.get('current'));
+const bookDBPut = blob => bookDBRun('readwrite', st => st.put(blob, 'current'));
+const bookDBDelete = () => bookDBRun('readwrite', st => st.delete('current'));
+
+async function parseBookPack(blob) {
+  const head = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  if (head.length < 12 || new TextDecoder().decode(head.slice(0, 8)) !== 'QNBOOK01') {
+    throw new Error('書籍データファイル(.qnbook)ではありません');
+  }
+  const hlen = new DataView(head.buffer).getUint32(8, true);
+  const hdr = JSON.parse(await blob.slice(12, 12 + hlen).text());
+  return {blob, base: 12 + hlen, pages: hdr.pages || {}, text: hdr.text || {}};
+}
+
+function useBookPack(pack) {
+  bookPack = pack;
+  bookSource = 'device';
+  bookIndex = pack.text;
+  bookIndexAvailable = Object.keys(bookIndex).length > 0;
+}
+
+// ページ画像: 端末内パックなら該当JPEGを切り出し、PCローカルなら book_pages の画像
+function bookPageSrc(p) {
+  if (bookSource === 'device' && bookPack) {
+    if (!bookPageUrlCache[p]) {
+      const e = bookPack.pages[String(p)];
+      if (!e) return '';
+      const st = bookPack.base + e[0];
+      bookPageUrlCache[p] = URL.createObjectURL(bookPack.blob.slice(st, st + e[1], 'image/jpeg'));
+    }
+    return bookPageUrlCache[p];
+  }
+  return 'book_pages/p' + String(p).padStart(3, '0') + '.png';
+}
+
+async function importBookPack(file) {
+  const st = document.getElementById('bookStatus');
+  try {
+    if (st) st.textContent = '書籍データを取り込み中…';
+    // バイト列を複製して保存(iPhoneの一時ファイル参照が消えても残るように)
+    const blob = new Blob([await file.arrayBuffer()], {type: 'application/octet-stream'});
+    const pack = await parseBookPack(blob);   // 形式チェック(違うファイルならここで止まる)
+    await bookDBPut(blob);
+    if (navigator.storage && navigator.storage.persist) {
+      try { await navigator.storage.persist(); } catch (e) {}
+    }
+    useBookPack(pack);
+    applyBookAvailabilityUI();
+    addMessage('assistant', '書籍データを取り込みました(' + Object.keys(pack.pages).length
+      + 'ページ)。この端末でも書籍の全文検索とページ画像が使えます。\n'
+      + 'データはこの端末の中にだけ保存され、外部へは送信されません。');
+  } catch (e) {
+    applyBookAvailabilityUI();
+    alert('書籍データを取り込めませんでした。\n' + ((e && e.message) || e));
+  }
+}
+
+async function removeBookPack() {
+  if (!confirm('この端末に保存した書籍データを削除しますか？\n(内蔵FAQは引き続き使えます)')) return;
+  try { await bookDBDelete(); } catch (e) {}
+  Object.values(bookPageUrlCache).forEach(u => URL.revokeObjectURL(u));
+  for (const k in bookPageUrlCache) delete bookPageUrlCache[k];
+  bookPack = null; bookSource = null; bookIndex = {}; bookIndexAvailable = false;
+  applyBookAvailabilityUI();
+}
+
 async function loadBookIndex() {
   if (bookIndex !== null) return bookIndex;
   if (bookIndexLoadPromise) return bookIndexLoadPromise;
   bookIndexLoadPromise = (async () => {
+    // ⓪ この端末に取り込んだ書籍データ(スマホ等)。保存領域が使えない環境(file://等)でも
+    //    下の①〜③へ進むよう、失敗・3秒無応答は握りつぶす
+    try {
+      const saved = await Promise.race([bookDBGet(), new Promise(r => setTimeout(() => r(null), 3000))]);
+      if (saved) {
+        useBookPack(await parseBookPack(saved));
+        if (bookIndexAvailable) return bookIndex;
+      }
+    } catch (e) {}
     // ① 既に読み込み済み（HTMLに直接 <script> を置いた場合など）
     if (window.BOOK_INDEX && Object.keys(window.BOOK_INDEX).length > 0) {
       bookIndex = window.BOOK_INDEX;
       bookIndexAvailable = true;
+      bookSource = 'local';
       return bookIndex;
     }
     // ② script注入（file:// でも通る＝ローカル運用の本命）
@@ -1248,6 +1366,7 @@ async function loadBookIndex() {
     if (ok && window.BOOK_INDEX && Object.keys(window.BOOK_INDEX).length > 0) {
       bookIndex = window.BOOK_INDEX;
       bookIndexAvailable = true;
+      bookSource = 'local';
       return bookIndex;
     }
     // ③ fetch（http配信していて book_index.js が未生成の場合の保険）
@@ -1256,6 +1375,7 @@ async function loadBookIndex() {
       if (!res.ok) throw new Error('not found');
       bookIndex = await res.json();
       bookIndexAvailable = Object.keys(bookIndex).length > 0;
+      if (bookIndexAvailable) bookSource = 'local';
     } catch(e) {
       // 公開版(GitHub Pages)は書籍データを持たない＝正常系。内蔵FAQのみで動く
       console.info('書籍索引なし → 内蔵FAQのみで回答します');
@@ -1471,7 +1591,7 @@ async function localQA(query) {
 
   const noHitNote = bookIndexAvailable
     ? 'ご質問に該当する情報が書籍内で見つかりませんでした。'
-    : 'ご質問に該当するFAQが見つかりませんでした。\n※書籍全文検索・ページ画像はローカル版専用です（公開版は内蔵FAQのみで回答します）。';
+    : 'ご質問に該当するFAQが見つかりませんでした。\n※上部の「📥 書籍データを取り込む」で書籍データを入れると、この端末でも書籍の全文検索とページ画像が使えます。';
   return {
     answer: noHitNote + '\n\n下の候補をタップするか、別の言い回し・短いキーワードでお試しください。',
     pages: [],
