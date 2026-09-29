@@ -37,6 +37,7 @@
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: 'Segoe UI','Meiryo','Hiragino Sans',sans-serif; background:var(--gray-100); color:var(--gray-800); font-size:14px; height:100vh; display:flex; flex-direction:column; }
+@supports (height: 100dvh) { @media screen { body { height:100dvh; } } }
 /* Header */
 .header { background:linear-gradient(135deg, var(--navy-dark), var(--navy-light)); color:var(--white); display:flex; align-items:center; padding:0 24px; height:56px; flex-shrink:0; box-shadow:0 2px 8px rgba(0,0,0,.15); z-index:10; }
 .header h1 { font-size:15px; font-weight:600; margin-right:32px; white-space:nowrap; letter-spacing:.3px; }
@@ -220,6 +221,31 @@ canvas { border:1px solid var(--gray-200); border-radius:8px; background:var(--w
   input[type=number], input[type=text] { font-size:16px; } /* iOS zoom防止 */
   table input[type=number] { width:70px !important; font-size:15px; }
 }
+/* ===== iPhone対応(2026/9 実機サイズ検証で修正) ===== */
+@media screen and (max-width: 768px) {
+  /* 1. モジュール切替: 非表示だったサイドバーを上部の横並びタブにする(以前は開いたモジュールから戻れなかった) */
+  #tab-calc.active { flex-direction:column; }
+  .sidebar { display:flex; flex-direction:row; align-items:center; width:100%; overflow-x:auto; overflow-y:hidden;
+             border-right:none; border-bottom:1px solid var(--gray-200); padding:6px; gap:4px; scrollbar-width:none; }
+  .sidebar::-webkit-scrollbar { display:none; }
+  .sidebar-title { display:none; }
+  .sidebar-item, .sidebar-item.home { flex:0 0 auto; min-height:40px; padding:0 9px; margin:0; justify-content:center;
+             border:1px solid var(--gray-200); border-radius:20px; white-space:nowrap; font-size:13px; font-weight:500; }
+  .sidebar-item span { display:inline; }
+  .sidebar-item .icon { display:none; }
+  .sidebar-item.home .icon { display:inline; margin:0; width:auto; opacity:1; }
+  .sidebar-item.home span:not(.icon) { display:none; }
+  .sidebar-item.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+  /* 2. iOSの自動ズーム防止: 文字入力系はすべて16px以上 */
+  input:not([type=radio]):not([type=checkbox]), select, textarea { font-size:16px !important; }
+  /* 3. タップしやすさ(指で押せる高さに) */
+  #matCatalog .btn { min-height:38px; padding:8px 10px !important; font-size:12px !important; }
+  .btn-print, .btn-copy { min-height:38px; padding:8px 16px; }
+  /* 4. Q&A入力欄: ホームバー(画面下端)に被らない */
+  .chat-input-area { padding:10px 12px calc(10px + env(safe-area-inset-bottom)); }
+  .chat-input-area textarea { height:48px; }
+  .back-to-top { bottom:calc(96px + env(safe-area-inset-bottom)); }
+}
 </style>
 </head>
 <body>
@@ -332,7 +358,7 @@ canvas { border:1px solid var(--gray-200); border-radius:8px; background:var(--w
         <div class="msg system" id="chatWelcome">許容応力度設計に関する質問をどうぞ。実務ノウハウ・法令告示の要点をまとめた内蔵FAQから回答します。<br>例：「壁量」「N値」「たわみ」「梁せい」「短期接地圧」「筋かい」など、自由なキーワードでOK。</div>
       </div>
       <div class="chat-input-area">
-        <textarea id="chatInput" placeholder="質問を入力... (Enter で送信、Shift+Enter で改行)" onkeydown="handleChatKey(event)"></textarea>
+        <textarea id="chatInput" enterkeyhint="send" placeholder="質問を入力... (Enter で送信、Shift+Enter で改行)" onkeydown="handleChatKey(event)"></textarea>
         <button class="btn btn-primary" onclick="sendChat()">送信</button>
       </div>
     </div>
@@ -894,8 +920,15 @@ function drawRepose(L, H, theta) {
   const c = document.getElementById('reposeCanvas');
   if (!c) return;
   const ctx = c.getContext('2d');
-  ctx.clearRect(0,0,c.width,c.height);
-  const W = c.width, CH = c.height;
+  // Retina(iPhoneはDPR3)でぼやけないよう、論理サイズ400x300のまま実ピクセルをDPR倍にする
+  const LW = 400, LH = 300, dpr = Math.min(window.devicePixelRatio || 1, 3);
+  if (c.width !== Math.round(LW * dpr)) {
+    c.width = Math.round(LW * dpr); c.height = Math.round(LH * dpr);
+    c.style.width = LW + 'px'; c.style.maxWidth = '100%'; c.style.height = 'auto';
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, LW, LH);
+  const W = LW, CH = LH;
   const margin = 50;
   const maxDim = Math.max(L, H, 300);
   const scale = (Math.min(W, CH) - 2*margin) / maxDim;
@@ -1002,6 +1035,9 @@ function calcFooting() {
 let chatHistory = [];
 
 function handleChatKey(e) {
+  // 日本語入力の変換確定Enterでは送信しない
+  // (iPhone/SafariはIME確定時に isComposing=false・keyCode 229 のEnterを出すため両方で判定)
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendChat();
@@ -1771,6 +1807,11 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('calcResultWrap').style.display = 'none';
   // 書籍インデックスを先読みし、ローカル版(book_pages有り)のみページジャンプUIを表示
   loadBookIndex().then(applyBookAvailabilityUI);
+  // スマホ(タッチ操作)ではShift+Enterの案内は不要 → 入力例に差し替え
+  if (window.matchMedia && matchMedia('(pointer: coarse)').matches) {
+    const ci = document.getElementById('chatInput');
+    if (ci) ci.placeholder = '質問を入力(例: たわみ、N値)';
+  }
   // Service Worker登録 (PWAオフライン対応)
   // Service Worker登録 (PWAオフライン対応)
   // ※ 以前は blob: URL から登録していたため仕様上必ず失敗しオフラインが効いていなかった。
